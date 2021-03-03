@@ -1,4 +1,4 @@
-#map {
+#mapDiv {
   height: 100%;
 }
 
@@ -7,4 +7,25 @@ body {
   height: 100%;
   margin: 0;
   padding: 0;
+}
+
+#routeInfo {
+	background: none padding-box rgb(255, 255, 255);
+	border-radius: 2px;
+	bottom: 0px;
+	box-shadow: rgb(0 0 0 / 30%) 0px 1px 4px -1px;
+	cursor: pointer;
+	height: 40px;
+	line-height: 40px;
+	left: 0px;
+	margin: 10px;
+	position: absolute;
+	vertical-align: middle;
+	width: 300px;
+  display: none;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 15px;
+  text-align: center;
+  user-select: none;
+  z-index: 1000000;
 }
