@@ -7,6 +7,8 @@ var selectedRoutesLength = 0;
 var routeInfoDiv;
 var mapDiv;
 
+var ctrlDown = false;
+
 /******** GPX file and route parsing ***********/
 async function parseRoutes(gpx) {
   var routes = [];
@@ -165,6 +167,8 @@ function setSelectedRoutes(routes) {
 }
 
 function addToSelectedRoutes(route) {
+  if (selectedRoutes.includes(route)) return;
+
   selectedRoutes.push(route)
   updatePathApperance(route, "selected");
   updateSelectedRoutesLength();
@@ -172,10 +176,33 @@ function addToSelectedRoutes(route) {
 }
 
 function removeFromSelectedRoutes(route) {
+  if (!selectedRoutes.includes(route)) return;
+
   selectedRoutes = selectedRoutes.filter(item => item !== route);
   updatePathApperance(route, "hovered");
   updateSelectedRoutesLength();
   updateRouteInfo(null);
+}
+
+function selectRoutesInBounds(startLat, startLng, endLat, endLng) {
+  var minLat = Math.min(startLat, endLat);
+  var maxLat = Math.max(startLat, endLat);
+  var minLng = Math.min(startLng, endLng);
+  var maxLng = Math.max(startLng, endLng);
+
+  for (var i = 0; i < routes.length; i++) {
+    var curRoute = routes[i];
+
+    for (var j = 0; j < curRoute.points.length; j++) {
+      var curPoint = curRoute.points[j];
+
+      if (minLat < curPoint.lat && curPoint.lat < maxLat &&
+          minLng < curPoint.lng && curPoint.lng < maxLng) {
+        addToSelectedRoutes(curRoute);
+        break;
+      }
+    }
+  }
 }
 
 function updateSelectedRoutesLength() {
@@ -249,8 +276,18 @@ function mapKeyPress(event) {
   var key = event.keyCode || event.charCode;
   if (key == 46) { // delete key
     deleteSelectedRoutes();
-  } else if (key == 84) {
+  } else if (key == 84) { // 't' key
     toggleTrails();
+  } else if (key == 17) { // ctrl key
+    ctrlDown = true;
+  }
+}
+
+function mapKeyRelease(event) {
+  var key = event.keyCode || event.charCode;
+  if (key == 17) { // ctrl key
+    ctrlDown = false;
+    removeSelectionBox(false);
   }
 }
 
@@ -270,7 +307,7 @@ function showCurrentPosition() {
   var locationFound = function(position) {
     var lat = position.coords.latitude;
     var lng = position.coords.longitude;
-    map.flyTo(L.latLng(lat, lng));
+    zoomToPoint(lat, lng);
   }
 
   if (navigator.geolocation) {
@@ -301,6 +338,19 @@ var routeStyles = {
     opacity: 0.9,
     smothFactor: 1
   },
+}
+
+var selectionBox = null;
+var selectionBoxStart;
+var selectionBoxEnd;
+
+var selectionBoxStyle = {
+  color: "#6e8f5e",
+  opacity: 0.7,
+  weight: 3,
+  fill: true,
+  fillColor: "#6e8f5e",
+  fillOpacity: 0.3 
 }
 
 function drawRoute(route) {
@@ -353,6 +403,10 @@ function zoomToRoutes(routes) {
   map.flyToBounds(bounds);
 }
 
+function zoomToPoint(lat, lng) {
+  map.flyTo(L.latLng(lat, lng));
+}
+
 function initMap() {
   routes = [];
 
@@ -364,11 +418,21 @@ function initMap() {
   mapDiv.addEventListener("dragleave", ignoreDefaults);
   mapDiv.addEventListener("drop", parseDroppedFiles);
   mapDiv.addEventListener("keydown", mapKeyPress);
+  mapDiv.addEventListener("keyup", mapKeyRelease);
 
   map = L.map('mapDiv').setView({
     lat: 55.50841618187183,
     lng: 11.593322753906252
   }, 9);
+
+  map.on('click', function(ev) { 
+    if (selectionBox) {
+      removeSelectionBox(true);
+    } else { 
+      createSelectionBox(ev.latlng); 
+    }
+  });
+  map.on('mousemove', function(ev) { updateSelectionBox(ev.latlng); });
 
   var outdoorsTiles = L.tileLayer('https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', {
     attribution: '&copy; <a href="http://www.thunderforest.com/">Thunderforest</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -411,6 +475,33 @@ function updatePathApperance(route, appearence) {
   } else {
     route.path.bringToFront();
   }
+}
+
+function createSelectionBox(startLatLng) {
+  if (!ctrlDown) return;
+
+  selectionBoxStart = startLatLng;
+  var boxBounds = L.latLngBounds(selectionBoxStart, selectionBoxStart);
+  selectionBox = L.rectangle(boxBounds, selectionBoxStyle).addTo(map);
+}
+
+function updateSelectionBox(newLatLng) {
+  if (!selectionBox) return;
+
+  selectionBoxEnd = newLatLng;
+  selectionBox.setBounds(L.latLngBounds(selectionBoxStart, selectionBoxEnd));
+}
+
+function removeSelectionBox(addRoutes) {
+  if (!selectionBox) return;
+
+  if (addRoutes) {
+    selectRoutesInBounds(selectionBoxStart.lat, selectionBoxStart.lng, 
+                         selectionBoxEnd.lat, selectionBoxEnd.lng);
+  }
+
+  selectionBox.remove();
+  selectionBox = null;
 }
 
 /*** Google maps 
