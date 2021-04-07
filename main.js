@@ -32,22 +32,39 @@ async function parseRoutes(gpx) {
     for (var j = 0; j < segments.length; j++) {
       var segment = segments[j];
 
+      var startTime;
+      var endTime;
       var points = [];
       var trkpts = segment.getElementsByTagName("trkpt");
       for (var k = 0; k < trkpts.length; k++) {
         var trkpt = trkpts[k];
+        var firstPoint = (k == 0);
+        var lastPoint = (k == trkpts.length - 1);
+
         var lat = parseFloat(trkpt.getAttribute("lat"));
         var lon = parseFloat(trkpt.getAttribute("lon"));
         var point = {
           lat: lat, lng: lon
         };
         points.push(point);
+
+        var timeTags = trkpt.getElementsByTagName("time");
+        if (timeTags.length > 0) {
+          var time = new Date(timeTags[0].textContent);
+          if (firstPoint) {
+            startTime = time;
+          } else if (lastPoint) {
+            endTime = time;
+          }
+        }
       }
 
       var newRoute = {
         name: name,
         points: points,
         length: routeLength(points),
+        startTime: startTime,
+        endTime: endTime,
         hash: await routeHash(points),
         visible: true,
         selected: false
@@ -797,6 +814,8 @@ async function addRouteToDb(route) {
     name: route.name,
     length: route.length,
     points: route.points,
+    startTime: route.startTime,
+    endTime: route.endTime,
     hash: route.hash
   }
 
@@ -809,7 +828,6 @@ async function addRouteToDb(route) {
   var objectStore = transaction.objectStore("routes");
   var request = objectStore.add(dbRoute);
   request.onsuccess = async function(event) {
-    console.log("Added " + route.name);
     route.id = await getRouteId(route);
   };
 
