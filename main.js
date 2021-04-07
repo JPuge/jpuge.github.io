@@ -148,6 +148,19 @@ function clearRouteInfo() {
   }
 }
 
+function showUndoRouteDelete(plural, undoHandler) {
+  var container = document.querySelector("#deleteUndoDiv");
+  container.MaterialSnackbar.showSnackbar({
+    message: plural ? "Routes were deleted" : "Route was deleted",
+    timeout: 5000,
+    actionText: "Undo",
+    actionHandler: async function(event) {
+      undoHandler(event);
+      container.MaterialSnackbar.cleanup_();
+    }
+  });
+}
+
 /******** Control code ***********/
 function clearSelectedRoutes() {
   selectedRoutes.forEach(route => updatePathApperance(route, "default"));
@@ -256,10 +269,14 @@ function ignoreDefaults(e) {
 
 async function addGpxFile(gpxRoute) {
   var fileRoutes = await parseRoutes(gpxRoute);
+  return await addRoutes(fileRoutes);
+}
+
+async function addRoutes(addedRoutes) {
   var newRoutes = [];
 
-  for (var i = 0; i < fileRoutes.length; i++) {
-    var route = fileRoutes[i];
+  for (var i = 0; i < addedRoutes.length; i++) {
+    var route = addedRoutes[i];
     if (await routeExists(route)) {
       console.log("Route already exists: " + route.name);
     } else {
@@ -268,6 +285,8 @@ async function addGpxFile(gpxRoute) {
       addRouteToDb(route);
     }
   }
+
+  routes = routes.concat(newRoutes);
 
   return newRoutes;
 }
@@ -292,15 +311,25 @@ function mapKeyRelease(event) {
 }
 
 function deleteSelectedRoutes() {
+  var deletedRoutes = [];
+
   for (var i = 0; i < selectedRoutes.length; i++) {
     var route = selectedRoutes[i];
     routes = routes.filter(item => item !== route);
     removeRouteFromDb(route);
     removeRouteFromMap(route);
+
+    deletedRoutes.push(route);
   }
 
   selectedRoutes = [];
   clearRouteInfo();
+
+  showUndoRouteDelete(deletedRoutes.length > 1, async function(event) {
+    addRoutes(deletedRoutes);
+    deletedRoutes = [];
+
+  });
 }
 
 function showCurrentPosition() {
