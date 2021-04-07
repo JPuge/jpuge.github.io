@@ -136,7 +136,12 @@ function updateRouteInfo(route) {
   } else if (selectedRoutes.length == 1) {
     routeInfoDiv.innerHTML = selectedRoutes[0].name + " - <b>" + round(selectedRoutes[0].length) + "</b> km";
   } else {
-    routeInfoDiv.innerHTML = "<b>" + round(selectedRoutesLength) + "</b> km";
+    if (selectedRoutesLength > 0) {
+      routeInfoDiv.innerHTML = "<b>" + round(selectedRoutesLength) + "</b> km";
+    } else {
+      clearRouteInfo();
+      return;
+    }
   }
   routeInfoDiv.style.display = "table-cell";
 }
@@ -194,7 +199,7 @@ function removeFromSelectedRoutes(route) {
   selectedRoutes = selectedRoutes.filter(item => item !== route);
   updatePathApperance(route, "hovered");
   updateSelectedRoutesLength();
-  updateRouteInfo(null);
+  updateRouteInfo(route);
 }
 
 function selectRoutesInBounds(startLat, startLng, endLat, endLng) {
