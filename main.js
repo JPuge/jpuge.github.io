@@ -1,7 +1,9 @@
 /******** Global route variables ***********/
-var routes;
+var routes = [];
 var selectedRoutes = [];
 var selectedRoutesLength = 0;
+
+var routesHidden = false;
 
 /******** Global UI variables ***********/
 var routeInfoDiv;
@@ -46,7 +48,9 @@ async function parseRoutes(gpx) {
         name: name,
         points: points,
         length: routeLength(points),
-        hash: await routeHash(points)
+        hash: await routeHash(points),
+        visible: true,
+        selected: false
       };
 
       routes.push(newRoute);
@@ -168,7 +172,10 @@ function showUndoRouteDelete(plural, undoHandler) {
 
 /******** Control code ***********/
 function clearSelectedRoutes() {
-  selectedRoutes.forEach(route => updatePathApperance(route, "default"));
+  selectedRoutes.forEach(function (route) {
+    route.selected = false;
+    updatePathApperance(route, "default");
+  });
   selectedRoutesLength = 0;
   selectedRoutes = [];
   clearRouteInfo();
@@ -179,6 +186,7 @@ function setSelectedRoutes(routes) {
   selectedRoutes = routes;
   updateSelectedRoutesLength();
   for (var i = 0; i < routes.length; i++) {
+    routes[i].selected = true;
     updatePathApperance(routes[i], "selected");
   }
   updateRouteInfo(null);
@@ -187,7 +195,8 @@ function setSelectedRoutes(routes) {
 function addToSelectedRoutes(route) {
   if (selectedRoutes.includes(route)) return;
 
-  selectedRoutes.push(route)
+  selectedRoutes.push(route);
+  route.selected = true;
   updatePathApperance(route, "selected");
   updateSelectedRoutesLength();
   updateRouteInfo(null);
@@ -197,9 +206,45 @@ function removeFromSelectedRoutes(route) {
   if (!selectedRoutes.includes(route)) return;
 
   selectedRoutes = selectedRoutes.filter(item => item !== route);
+  route.selected = false;
   updatePathApperance(route, "hovered");
   updateSelectedRoutesLength();
   updateRouteInfo(route);
+}
+
+function unhideAllRoutes() {
+  if (!routesHidden) return;
+  
+  routes.forEach(function(route) { 
+    if (!route.visible) {
+      route.visible = true;
+      route.path.addTo(map);
+    }
+  });
+
+  routesHidden = false;
+}
+
+function hideOtherRoutes(visibleRoutes) {
+  if (routesHidden) return;
+
+  var nonSelectedRoutes = routes.filter(route => !visibleRoutes.includes(route));
+  nonSelectedRoutes.forEach(function(route) {
+    route.visible = false;
+    route.path.remove()
+  });
+
+  routesHidden = true;
+}
+
+function toggleHiddenSelectedRoutes() {
+  if (routesHidden) {
+    unhideAllRoutes();
+  } else {
+    if (selectedRoutes.length > 0) {
+      hideOtherRoutes(selectedRoutes);
+    }
+  }
 }
 
 function selectRoutesInBounds(startLat, startLng, endLat, endLng) {
@@ -210,6 +255,10 @@ function selectRoutesInBounds(startLat, startLng, endLat, endLng) {
 
   for (var i = 0; i < routes.length; i++) {
     var curRoute = routes[i];
+
+    if (!curRoute.visible) {
+      continue;
+    }
 
     for (var j = 0; j < curRoute.points.length; j++) {
       var curPoint = curRoute.points[j];
@@ -298,13 +347,20 @@ async function addRoutes(addedRoutes) {
 
 function mapKeyPress(event) {
   var key = event.keyCode || event.charCode;
+  
   if (key == 46) { // delete key
     deleteSelectedRoutes();
   } else if (key == 84) { // 't' key
     toggleTrails();
   } else if (key == 17) { // ctrl key
     ctrlDown = true;
+  } else if (key == 27) { // esc key
+    clearSelectedRoutes();
+  } else if (key == 72) { // 'h' key
+    toggleHiddenSelectedRoutes();
   }
+
+  ignoreDefaults(event);
 }
 
 function mapKeyRelease(event) {
@@ -453,6 +509,9 @@ function initMap() {
   mapDiv.addEventListener("drop", parseDroppedFiles);
   mapDiv.addEventListener("keydown", mapKeyPress);
   mapDiv.addEventListener("keyup", mapKeyRelease);
+
+  document.body.addEventListener("keydown", mapKeyPress);
+  document.body.addEventListener("keyup", mapKeyRelease);
 
   map = L.map('mapDiv').setView({
     lat: 55.50841618187183,
@@ -666,6 +725,8 @@ function initDb() {
       var cursor = event.target.result;
       if (cursor) {
         var route = cursor.value;
+        route.selected = false;
+        route.visible = true;
         drawRoute(route);
         routes.push(route);
         cursor.continue();
