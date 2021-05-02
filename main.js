@@ -196,6 +196,7 @@ function clearSelectedRoutes() {
   selectedRoutesLength = 0;
   selectedRoutes = [];
   clearRouteInfo();
+  unhideAllRoutes();
 }
 
 function setSelectedRoutes(routes) {
@@ -268,6 +269,10 @@ function unhideAllRoutes() {
       route.visible = true;
       route.path.addTo(map);
     }
+  });
+
+  selectedRoutes.forEach(function(route) {
+    route.path.bringToFront();
   });
 
   routesHidden = false;
