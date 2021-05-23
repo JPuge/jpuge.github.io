@@ -147,6 +147,22 @@ async function routeHash(points) {
 }
 
 /******** UI code ***********/
+var helpBtn, helpDialog, closeHelpBtn;
+
+function initUI() {
+  helpBtn = document.querySelector("#helpBtn");
+  helpDialog = document.querySelector("#helpDialog");
+  closeHelpBtn = document.querySelector("#closeHelpBtn");
+
+  helpBtn.addEventListener('click', function() {
+    helpDialog.showModal();
+  });
+
+  closeHelpBtn.addEventListener('click', function() {
+    helpDialog.close();
+  });
+}
+
 function round(number) {
   return Math.round(number * 100) / 100;
 }
@@ -589,6 +605,7 @@ function initMap() {
   routeInfoDiv.addEventListener("click", clearSelectedRoutes);
 
   initDb();
+  initUI();
   showCurrentPosition();
 }
 

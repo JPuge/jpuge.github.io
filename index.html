@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
-	<head>
-		<title>GPXer</title>
+  <head>
+    <title>GPXer</title>
     <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
     <script src="main.js"></script>
     <link rel="stylesheet" href="style.css">
@@ -10,25 +10,45 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
     <link rel="stylesheet" href="https://code.getmdl.io/1.3.0/material.indigo-pink.min.css">
     <script defer src="https://code.getmdl.io/1.3.0/material.min.js"></script>
-	</head>
+  </head>
 
-	<body>
-		<div id="mapDiv"></div>
-		<div id="routeInfo"></div>
+  <body>
+    <div id="mapDiv"></div>
+    <div id="routeInfo" class="floater"></div>
+    <div id="helpBtn" class="floater">?</div>
 
-		<div id="deleteUndoDiv" class="mdl-js-snackbar mdl-snackbar">
-		  <div class="mdl-snackbar__text"></div>
-		  <button class="mdl-snackbar__action" type="button"></button>
-		</div>
+    <div id="deleteUndoDiv" class="mdl-js-snackbar mdl-snackbar">
+      <div class="mdl-snackbar__text"></div>
+      <button class="mdl-snackbar__action" type="button"></button>
+    </div>
 
-		<!--<script 
-			src="https://maps.googleapis.com/maps/api/js?key=KEY&callback=initMap&libraries=&v=weekly"
+    <dialog id="helpDialog" class="mdl-dialog">
+      <h3 class="mdl-dialog__title">Help</h3>
+      <div class="mdl-dialog__content">
+        <p>
+          Drag and drop .gpx files onto the map to add routes.
+        </p>
+        <table>
+          <tr><td><div class="keyDiv">Ctrl</div></td><td>Click to select multiple routes</td></tr>
+          <tr><td><div class="keyDiv">Del</div></td><td>Delete selected routes</td></tr>
+          <tr><td><div class="keyDiv">Esc</div></td><td>Clear selected routes</td></tr>
+          <tr><td><div class="keyDiv">t</div></td><td>Shown public routes</td></tr>
+          <tr><td><div class="keyDiv">h</div></td><td>Hide non-selected routes</td></tr>
+        </table>
+      </div>
+      <div class="mdl-dialog__actions">
+        <button type="button" id="closeHelpBtn" class="mdl-button">Close</button>
+      </div>
+    </dialog>
+
+    <!--<script 
+      src="https://maps.googleapis.com/maps/api/js?key=KEY&callback=initMap&libraries=&v=weekly"
       async> </script>-->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"
       integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA=="
       crossorigin=""></script>
     <script>
-    	initMap();
+      initMap();
     </script>
-	</body>
+  </body>
 </html>
