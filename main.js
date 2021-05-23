@@ -416,7 +416,8 @@ async function addRoutes(addedRoutes) {
 
 function mapKeyPress(event) {
   var key = event.keyCode || event.charCode;
-  
+  var keyHandled = true;
+
   if (key == 46) { // delete key
     deleteSelectedRoutes();
   } else if (key == 84) { // 't' key
@@ -427,9 +428,13 @@ function mapKeyPress(event) {
     clearSelectedRoutes();
   } else if (key == 72) { // 'h' key
     toggleHiddenSelectedRoutes();
+  } else {
+    keyHandled = false;
   }
 
-  ignoreDefaults(event);
+  if (keyHandled) {
+    ignoreDefaults(event);
+  }
 }
 
 function mapKeyRelease(event) {
