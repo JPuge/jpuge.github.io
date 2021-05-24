@@ -146,21 +146,78 @@ async function routeHash(points) {
   return hashHex;
 }
 
+
+/******** User input ***********/
+function mapKeyPress(event) {
+  var key = event.keyCode || event.charCode;
+  var keyHandled = true;
+
+  if (helpShown) {
+    if (key == 27) { // esc key
+      hideHelp();
+    }
+  } else {
+    if (key == 46) { // delete key
+      deleteSelectedRoutes();
+    } else if (key == 84) { // 't' key
+      toggleTrails();
+    } else if (key == 27) { // esc key
+      clearSelectedRoutes();
+    } else if (key == 72) { // 'h' key
+      toggleHiddenSelectedRoutes();
+    } else {
+      keyHandled = false;
+    }  
+  }
+
+  if (key == 17) { // ctrl key
+    ctrlDown = true;
+  } else if (key == 191) { // '?' key
+    toggleHelp();
+  }
+
+  if (keyHandled) {
+    ignoreDefaults(event);
+  }
+}
+
+function mapKeyRelease(event) {
+  var key = event.keyCode || event.charCode;
+  if (key == 17) { // ctrl key
+    ctrlDown = false;
+    removeSelectionBox(false);
+  }
+}
+
 /******** UI code ***********/
 var helpBtn, helpDialog, closeHelpBtn;
+var helpShown = false;
+
+function hideHelp() {
+  helpDialog.close();
+  helpShown = false;
+}
+
+function showHelp() {
+  helpDialog.showModal();
+  helpShown = true;
+}
+
+function toggleHelp() {
+  if (helpShown) {
+    hideHelp();
+  } else {
+    showHelp();
+  }
+}
 
 function initUI() {
   helpBtn = document.querySelector("#helpBtn");
   helpDialog = document.querySelector("#helpDialog");
   closeHelpBtn = document.querySelector("#closeHelpBtn");
 
-  helpBtn.addEventListener('click', function() {
-    helpDialog.showModal();
-  });
-
-  closeHelpBtn.addEventListener('click', function() {
-    helpDialog.close();
-  });
+  helpBtn.addEventListener('click', showHelp);
+  closeHelpBtn.addEventListener('click', hideHelp);
 }
 
 function round(number) {
@@ -412,37 +469,6 @@ async function addRoutes(addedRoutes) {
   routes = routes.concat(newRoutes);
 
   return newRoutes;
-}
-
-function mapKeyPress(event) {
-  var key = event.keyCode || event.charCode;
-  var keyHandled = true;
-
-  if (key == 46) { // delete key
-    deleteSelectedRoutes();
-  } else if (key == 84) { // 't' key
-    toggleTrails();
-  } else if (key == 17) { // ctrl key
-    ctrlDown = true;
-  } else if (key == 27) { // esc key
-    clearSelectedRoutes();
-  } else if (key == 72) { // 'h' key
-    toggleHiddenSelectedRoutes();
-  } else {
-    keyHandled = false;
-  }
-
-  if (keyHandled) {
-    ignoreDefaults(event);
-  }
-}
-
-function mapKeyRelease(event) {
-  var key = event.keyCode || event.charCode;
-  if (key == 17) { // ctrl key
-    ctrlDown = false;
-    removeSelectionBox(false);
-  }
 }
 
 function deleteSelectedRoutes() {
