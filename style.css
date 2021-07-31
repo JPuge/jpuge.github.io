@@ -55,6 +55,22 @@ body {
   z-index: 1000000;
 }
 
+.dateDropDown {
+  margin: 0px 10px;
+}
+
+#dateSelectors {
+  top: 0px;
+  z-index: 1000000;
+  width: 400px;
+  line-height: 30px;
+  height: 30px;
+  margin-right: auto;
+  margin-left: auto;
+  right: 0px;
+  left: 0px;
+}
+
 #helpDialog {
   width: 400px;
 }
