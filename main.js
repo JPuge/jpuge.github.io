@@ -164,6 +164,16 @@ function addToDateOverview(route) {
   addToSetArray(allWeeks, route.startTime.getWeek());
 }
 
+function rebuildDateOverview() {
+  allYears = [];
+  allMonths = [];
+  allWeeks = [];
+
+  for (var i = 0; i < routes.length; i++) {
+    addToDateOverview(routes[i]);
+  }
+}
+
 
 /******** User input ***********/
 function mapKeyPress(event) {
@@ -239,6 +249,12 @@ function addOptionToSelect(select, text, value) {
   select.add(option);
 }
 
+function removeOptionsFromSelect(select) {
+  for (var i = select.options.length - 1; i >= 0; i--) {
+    select.remove(i);
+  }
+}
+
 function addArrayToSelect(array, select, textGenerator) {
   array.sort(function( a , b){
     if(a > b) return 1;
@@ -259,6 +275,10 @@ function clearDateSelectors() {
 }
 
 function updateDateSelectors() {
+  removeOptionsFromSelect(yearSelector);
+  removeOptionsFromSelect(monthSelector);
+  removeOptionsFromSelect(weekSelector);
+
   var monthNames = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"
@@ -555,6 +575,8 @@ async function addRoutes(addedRoutes) {
 
   routes = routes.concat(newRoutes);
 
+  updateDateSelectors();
+
   return newRoutes;
 }
 
@@ -572,11 +594,12 @@ function deleteSelectedRoutes() {
 
   selectedRoutes = [];
   clearRouteInfo();
+  rebuildDateOverview();
+  updateDateSelectors();
 
   showUndoRouteDelete(deletedRoutes.length > 1, async function(event) {
     addRoutes(deletedRoutes);
     deletedRoutes = [];
-
   });
 }
 
