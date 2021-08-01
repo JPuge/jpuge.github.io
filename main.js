@@ -195,6 +195,8 @@ function mapKeyPress(event) {
       toggleHiddenSelectedRoutes();
     } else if (key == 68) { // 'd' key
       toggleDateSelectors();
+    } else if (key == 18) { // alt key
+      enlargeRoutes();
     } else {
       keyHandled = false;
     }  
@@ -216,6 +218,8 @@ function mapKeyRelease(event) {
   if (key == 17) { // ctrl key
     ctrlDown = false;
     removeSelectionBox(false);
+  } else if (key == 18) { // alt key
+    shrinkRoutes();
   }
 }
 
@@ -678,23 +682,24 @@ function showCurrentPosition() {
 /******** Map functions ***********/
 var map;
 var hikingTrails;
+var routesEnlarged = false;
 
 var routeStyles = {
   "default": {
     color: "#0000CC",
-    weight: 3,
+    weight: 2,
     opacity: 0.9,
     smothFactor: 1
   },
   "selected": {
     color: "#FFD90F",
-    weight: 4,
+    weight: 3,
     opacity: 0.9,
     smothFactor: 1
   },
   "hovered": {
     color: "#CC0000",
-    weight: 4,
+    weight: 3,
     opacity: 0.9,
     smothFactor: 1
   },
@@ -835,11 +840,35 @@ function toggleTrails() {
 }
 
 function updatePathApperance(route, appearence) {
+  route.appearence = appearence;
+
   route.path.setStyle(routeStyles[appearence]);
   if (appearence == "default") {
     route.path.bringToBack();
   } else {
     route.path.bringToFront();
+  }
+}
+
+function enlargeRoutes() {
+  if (routesEnlarged) return;
+  changeRouteWidth(2);
+  routesEnlarged = true;
+}
+
+function shrinkRoutes() {
+  if (!routesEnlarged) return;
+  changeRouteWidth(-2);
+  routesEnlarged = false;
+}
+
+function changeRouteWidth(diff) {
+  routeStyles["default"].weight += diff;
+  routeStyles["selected"].weight += diff;
+  routeStyles["hovered"].weight += diff;
+
+  for (var i = 0; i < routes.length; i++) {
+    updatePathApperance(routes[i], routes[i].appearence);
   }
 }
 
