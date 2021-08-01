@@ -255,6 +255,19 @@ function removeOptionsFromSelect(select) {
   }
 }
 
+function selectHasOption(select, option) {
+  for (var i = select.options.length - 1; i >= 0; i--) {
+    if (select.options[i].value == option) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function setSelectOptionIfPossible(select, option) {
+  select.value = (selectHasOption(select, option) && option != null ? option : "null");
+}
+
 function addArrayToSelect(array, select, textGenerator) {
   array.sort(function( a , b){
     if(a > b) return 1;
@@ -274,26 +287,44 @@ function clearDateSelectors() {
   weekSelector.value = "null";
 }
 
-function updateDateSelectors() {
+function getDateSelectorValues() {
+  return {
+    year: yearSelector.value == "null" || yearSelector.value == "" ? null : parseInt(yearSelector.value),
+    month: monthSelector.value == "null" || monthSelector.value == "" ? null : parseInt(monthSelector.value),
+    week: weekSelector.value == "null" || weekSelector.value == "" ? null : parseInt(weekSelector.value)
+  }
+}
+
+function updateDateSelectors(clearMonth, clearWeek) {
+  var selectedDate = getDateSelectorValues();
+  var dateOptions = getDateOptionsByYMW(selectedDate.year, selectedDate.month, selectedDate.week)
+
   removeOptionsFromSelect(yearSelector);
   removeOptionsFromSelect(monthSelector);
   removeOptionsFromSelect(weekSelector);
+
 
   var monthNames = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"
   ];
 
-  addArrayToSelect(allYears, yearSelector, function(year) { return year; });
-  addArrayToSelect(allMonths, monthSelector, function(month) { return monthNames[month]; });
-  addArrayToSelect(allWeeks, weekSelector, function(week) { return week; });
+  addArrayToSelect(dateOptions.years, yearSelector, function(year) { return year; });
+  addArrayToSelect(dateOptions.months, monthSelector, function(month) { return monthNames[month]; });
+  addArrayToSelect(dateOptions.weeks, weekSelector, function(week) { return week; });
+
+  setSelectOptionIfPossible(yearSelector, selectedDate.year);
+  setSelectOptionIfPossible(monthSelector, selectedDate.month);
+  setSelectOptionIfPossible(weekSelector, selectedDate.week);
 }
 
-function dateSelectorsChanged() {
-  selectRoutesByYMW(
-    yearSelector.value == "null" ? null : parseInt(yearSelector.value),
-    monthSelector.value == "null" ? null : parseInt(monthSelector.value),
-    weekSelector.value == "null" ? null : parseInt(weekSelector.value));
+function dateSelectorsChanged(clearMonth, clearWeek) {
+  if (clearMonth) monthSelector.value = "null";
+  if (clearWeek) weekSelector.value = "null";
+
+  var selectedDate = getDateSelectorValues();
+  selectRoutesByYMW(selectedDate.year, selectedDate.month, selectedDate.week);
+  updateDateSelectors();
 }
 
 function toggleDateSelectors() {
@@ -312,9 +343,9 @@ function initUI() {
   helpBtn.addEventListener('click', showHelp);
   closeHelpBtn.addEventListener('click', hideHelp);
 
-  yearSelector.addEventListener('change', dateSelectorsChanged);
-  monthSelector.addEventListener('change', dateSelectorsChanged);
-  weekSelector.addEventListener('change', dateSelectorsChanged);
+  yearSelector.addEventListener('change', function() { dateSelectorsChanged(true, true) });
+  monthSelector.addEventListener('change', function() { dateSelectorsChanged(false, true) });
+  weekSelector.addEventListener('change', function() { dateSelectorsChanged(false, false) });
 }
 
 function round(number) {
@@ -438,6 +469,35 @@ function selectRoutesByYMW(year, month, week) {
 
   setSelectedRoutes(routesInDateRange);
   zoomToRoutes(routesInDateRange);
+}
+
+function getDateOptionsByYMW(year, month, week) {
+  var filteredYears = [];
+  var filteredMonths = [];
+  var filteredWeeks = [];
+
+  for (var i = 0; i < routes.length; i++) {
+    var route = routes[i];
+
+    if ((route.startTime != null)) {
+      addToSetArray(filteredYears, route.startTime.getFullYear());
+
+      if (year == null || year == route.startTime.getFullYear()) {
+        addToSetArray(filteredMonths, route.startTime.getMonth());
+      }
+
+      if ((year == null || year == route.startTime.getFullYear()) &&
+          (month == null || month == route.startTime.getMonth())) {
+        addToSetArray(filteredWeeks, route.startTime.getWeek());
+      }
+    }
+  }
+
+  return {
+    years: filteredYears,
+    months: filteredMonths,
+    weeks: filteredWeeks
+  }
 }
 
 function unhideAllRoutes() {
