@@ -9,6 +9,10 @@ var allWeeks = [];
 
 var routesHidden = false;
 
+
+/******** Global group variables ***********/
+var groups = [];
+
 /******** Global UI variables ***********/
 var routeInfoDiv;
 var mapDiv;
@@ -380,9 +384,17 @@ function clearRouteInfo() {
 }
 
 function showUndoRouteDelete(plural, undoHandler) {
+  showUndoDelete(plural ? "Routes were deleted" : "Route was deleted", undoHandler);
+}
+
+function showUndoGroupDelete(undoHandler) {
+  showUndoDelete("Group was deleted", undoHandler);
+}
+
+function showUndoDelete(message, undoHandler) {
   var container = document.querySelector("#deleteUndoDiv");
   container.MaterialSnackbar.showSnackbar({
-    message: plural ? "Routes were deleted" : "Route was deleted",
+    message: message,
     timeout: 5000,
     actionText: "Undo",
     actionHandler: async function(event) {
@@ -679,6 +691,73 @@ function showCurrentPosition() {
   }
 }
 
+function findRoutesByIDs(routeIds) {
+  var routeIdHash = {};
+  for (var i = 0; i < routes.length; i++) {
+    var route = routes[i];
+    routeIdHash[route.id] = route;
+  }
+
+  var foundRoutes = [];
+  for (var i = 0; i < routeIds.length; i++) {
+    var routeId = routeIds[i];
+    if (routeIdHash.hasOwnProperty(routeId)) {
+      foundRoutes.push(routeIdHash[routeId]);
+    } else {
+      console.log("Unknown route ID: " + routeId);
+    }
+  }
+
+  return foundRoutes;
+}
+
+/******** Group functions ***********/
+function createGroup(name) {
+  var group = {
+    name: name,
+    routes: []
+  };
+
+  groups.push(group);
+  addGroupToDb(group);
+}
+
+function deleteGroup(name) {
+  var group = findGroup(name);
+  groups = groups.filter(item => item !== group);
+  removeGroupFromDb(group);
+
+  showUndoGroupDelete(async function(event) {
+    groups.push(group);
+    addGroupToDb(group);
+  });
+}
+
+function findGroup(name) {
+  for (var i = 0; i < groups.length; i++) {
+    var group = groups[i];
+    if (group.name == name) {
+      return group;
+    }
+  }
+  throw "Unknown group " + name;
+}
+
+function addRoutesToGroup(name, routes) {
+  var group = findGroup(name);
+
+  for (var i = 0; i < routes.length; i++) {
+    addToSetArray(group.routes, routes[i]);
+  }
+
+  updateGroupInDb(group);
+}
+
+function focusGroup(name) {
+  var group = findGroup(name);
+  setSelectedRoutes(group.routes);
+}
+
 /******** Map functions ***********/
 var map;
 var hikingTrails;
@@ -900,17 +979,21 @@ function removeSelectionBox(addRoutes) {
 }
 
 
-/******** Route storage ***********/
+/******** Route and group storage ***********/
 var db;
 
 function initDb() {
-  var openRequest = indexedDB.open("routeDB", 1);
+  var openRequest = indexedDB.open("routeDB", 2);
 
   openRequest.onupgradeneeded = function(event) {
     db = event.target.result; 
     if (!db.objectStoreNames.contains('routes')) {  
       var objectStore = db.createObjectStore('routes', { keyPath: 'id', autoIncrement: true});
       objectStore.createIndex("hash", "hash", {unique: true});
+    }
+
+    if (!db.objectStoreNames.contains('groups')) {  
+      var objectStore = db.createObjectStore('groups', { keyPath: 'id', autoIncrement: true});
     }
   }
 
@@ -939,8 +1022,111 @@ function initDb() {
       if (routes.length > 0) {
         updateDateSelectors();
       }
+
+      // Groups must be loaded after routes
+      loadRoutes();
     }
   };
+}
+
+function loadRoutes() {
+  let readTransaction = db.transaction("groups");
+  let objectStore = readTransaction.objectStore("groups");
+  objectStore.openCursor().onsuccess = function(event) {
+    var cursor = event.target.result;
+    if (cursor) {
+      var dbGroup = cursor.value;
+      groups.push({
+        name: dbGroup.name,
+        routes: findRoutesByIDs(dbGroup.routeIds),
+        id: dbGroup.id
+      })
+
+      cursor.continue();
+    }
+  }
+}
+
+function lookupGroup(group, callback) {
+  var transaction = db.transaction(["groups"], "readwrite");
+  var objectStore = transaction.objectStore("groups");
+
+  return new Promise((resolve, reject) => {
+    var getter = objectStore.get(group.id);
+
+    getter.onsuccess = function(event) {
+      callback(getter, resolve);
+    }
+
+    getter.onerror = function(event) {
+      console.log("Unable to access database", event);
+      reject();
+    }
+  });
+}
+
+function groupExists(route) {
+  return lookupGroup(group, function(getter, resolve) {
+    resolve(getter.result);
+    if (!getter.result) {
+      resolve(false);
+    } else {
+      resolve(true);
+    }
+  });
+}
+
+async function addGroupToDb(group) {
+  var dbGroup = {
+    name: group.name,
+    routeIds: group.routes.map(route => route.id)
+  }
+
+  var transaction = db.transaction(["groups"], "readwrite");
+
+  transaction.onerror = function(event)  { 
+    console.error("Unable to access database", event); 
+  };
+
+  var objectStore = transaction.objectStore("groups");
+  var request = objectStore.add(dbGroup);
+  request.onsuccess = async function(event) {
+    group.id = event.target.result;
+  };
+}
+
+async function updateGroupInDb(group) {
+  var dbGroup = {
+    name: group.name,
+    routeIds: group.routes.map(route => route.id),
+    id: group.id
+  }
+
+  var transaction = db.transaction(["groups"], "readwrite");
+
+  transaction.onerror = function(event)  { 
+    console.error("Unable to access database", event); 
+  };
+
+  var objectStore = transaction.objectStore("groups");
+  var request = objectStore.put(dbGroup);
+  request.onsuccess = async function(event) {
+    
+  };
+}
+
+async function removeGroupFromDb(group) {
+  var transaction = db.transaction(["groups"], "readwrite");
+
+  transaction.onerror = function(event)  { 
+    console.error("Unable to access database", event); 
+  };
+
+  var objectStore = transaction.objectStore("groups");
+  var request = objectStore.delete(group.id);
+  request.onsuccess = function(event) {
+
+  }
 }
 
 async function removeRouteFromDb(route) {
@@ -953,7 +1139,7 @@ async function removeRouteFromDb(route) {
   var objectStore = transaction.objectStore("routes");
   var request = objectStore.delete(route.id);
   request.onsuccess = function(event) {
-    console.log("Removed " + route.name);
+
   }
 }
 
@@ -993,8 +1179,6 @@ function getRouteId(route) {
 }
 
 async function addRouteToDb(route) {
-  if (!db) return;
-
   var dbRoute = {
     name: route.name,
     length: route.length,
@@ -1015,7 +1199,6 @@ async function addRouteToDb(route) {
   request.onsuccess = async function(event) {
     route.id = await getRouteId(route);
   };
-
 }
 
 /******** Utils ***********/
