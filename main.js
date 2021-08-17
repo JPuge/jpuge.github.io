@@ -192,7 +192,7 @@ function mapKeyPress(event) {
     if (key == 27) { // esc key
       hideGroupSelector();
     } else if (event.target != newGroupName) {
-      if (key == 71 || key == 65) { // 'g' or 'a' key
+      if (key == 71 || key == 65 || key == 82) { // 'g', 'a', or 'r' key
         hideGroupSelector();
       }
     } else {
