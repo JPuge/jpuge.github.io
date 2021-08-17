@@ -188,6 +188,16 @@ function mapKeyPress(event) {
     if (key == 27) { // esc key
       hideHelp();
     }
+  } else if (groupSelectShown) {
+    if (key == 27) { // esc key
+      hideGroupSelector();
+    } else if (event.target != newGroupName) {
+      if (key == 71 || key == 65) { // 'g' or 'a' key
+        hideGroupSelector();
+      }
+    } else {
+      keyHandled = false;
+    }
   } else {
     if (key == 46) { // delete key
       deleteSelectedRoutes();
@@ -199,6 +209,10 @@ function mapKeyPress(event) {
       toggleHiddenSelectedRoutes();
     } else if (key == 68) { // 'd' key
       toggleDateSelectors();
+    } else if (key == 65) { // 'a' key
+      selectGroupToExtend();
+    } else if (key == 71) { // 'g' key
+      selectGroupToFocus();
     } else if (key == 18) { // alt key
       enlargeRoutes();
     } else {
@@ -227,10 +241,21 @@ function mapKeyRelease(event) {
   }
 }
 
+function newGroupKeyUp(event) {
+  var key = event.keyCode || event.charCode;
+  if (key == 13) {
+    if (newGroupName.value.length > 0) {
+      createGroup(newGroupName.value);
+      updateGroupSelector(groupSelectorCallback);
+    }
+  }
+}
+
 /******** UI code ***********/
 var dateSelectors, yearSelector, monthSelector, weekSelector;
-var helpBtn, helpDialog, closeHelpBtn;
-var helpShown = false;
+var helpBtn, helpDialog, closeHelpBtn, groupDialog, closeGroupBtn, groupList;
+var newGroupName, groupSelectorTitle, newGroupContainer, errorMsgDiv;
+var helpShown = false, groupSelectShown = false;
 
 function hideHelp() {
   helpDialog.close();
@@ -248,6 +273,47 @@ function toggleHelp() {
   } else {
     showHelp();
   }
+}
+
+var groupSelectorCallback = null;
+
+function groupSelectorClick(id) {
+  hideGroupSelector();
+  if (groupSelectorCallback) {
+    groupSelectorCallback(id);
+  }
+}
+
+function updateGroupSelector() {
+  var groupListItems = "";
+  for (var i = 0; i < groups.length; i++) {
+    var group = groups[i];
+    groupListItems += "<li class=\"groupListItem\" onclick=\"groupSelectorClick(" + group.id + ")\"><div>" + group.name + "</div></li>";
+  }
+
+  newGroupName.value = "";
+  newGroupName.parentElement.MaterialTextfield.change();
+  closeGroupBtn.focus();
+
+  groupList.innerHTML = groupListItems;
+}
+
+function showGroupSelector(callback, title, newGroupInput) {
+  groupSelectorCallback = callback;
+
+  updateGroupSelector();
+
+  groupSelectorTitle.innerText = title;
+  newGroupContainer.style.display = (newGroupInput ? "inline-block" : "none");
+
+  groupDialog.showModal();
+  closeGroupBtn.focus();
+  groupSelectShown = true;
+}
+
+function hideGroupSelector() {
+  groupDialog.close();
+  groupSelectShown = false;
 }
 
 function addOptionToSelect(select, text, value) {
@@ -342,7 +408,14 @@ function toggleDateSelectors() {
 function initUI() {
   helpBtn = document.querySelector("#helpBtn");
   helpDialog = document.querySelector("#helpDialog");
+  groupDialog = document.querySelector("#groupDialog");
+  groupList = document.querySelector(".groupList");
   closeHelpBtn = document.querySelector("#closeHelpBtn");
+  closeGroupBtn = document.querySelector("#closeGroupBtn");
+  newGroupName = document.querySelector("#newGroupName");
+  newGroupContainer = document.querySelector("#newGroupContainer");
+  groupSelectorTitle = document.querySelector("#groupSelectorTitle");
+  errorMsgDiv = document.querySelector("#errorMsgDiv");
   dateSelectors = document.querySelector("#dateSelectors");
   yearSelector = document.querySelector("#yearSelector");
   monthSelector = document.querySelector("#monthSelector");
@@ -350,10 +423,13 @@ function initUI() {
 
   helpBtn.addEventListener('click', showHelp);
   closeHelpBtn.addEventListener('click', hideHelp);
+  closeGroupBtn.addEventListener('click', hideGroupSelector);
 
   yearSelector.addEventListener('change', function() { dateSelectorsChanged(true, true) });
   monthSelector.addEventListener('change', function() { dateSelectorsChanged(false, true) });
   weekSelector.addEventListener('change', function() { dateSelectorsChanged(false, false) });
+
+  newGroupName.addEventListener('keyup', newGroupKeyUp);
 }
 
 function round(number) {
@@ -383,6 +459,14 @@ function clearRouteInfo() {
   }
 }
 
+function showErrorMsg(text) {
+  var container = document.querySelector("#snackbarDiv");
+  container.MaterialSnackbar.showSnackbar({
+    message: text,
+    timeout: 3000
+  });
+}
+
 function showUndoRouteDelete(plural, undoHandler) {
   showUndoDelete(plural ? "Routes were deleted" : "Route was deleted", undoHandler);
 }
@@ -392,7 +476,7 @@ function showUndoGroupDelete(undoHandler) {
 }
 
 function showUndoDelete(message, undoHandler) {
-  var container = document.querySelector("#deleteUndoDiv");
+  var container = document.querySelector("#snackbarDiv");
   container.MaterialSnackbar.showSnackbar({
     message: message,
     timeout: 5000,
@@ -586,6 +670,22 @@ function updateSelectedRoutesLength() {
   }, 0);
 }
 
+function selectGroupToFocus() {
+  showGroupSelector(focusGroup, "Select Group", true);
+}
+
+function selectGroupToExtend() {
+  if (selectedRoutes.length > 0) {
+    if (groups.length > 0) {
+      showGroupSelector(addSelectedRoutesToGroup, "Add to Group", false);
+    } else {
+      showErrorMsg("Create a group first by pressing 'g'");
+    }
+  } else {
+    showErrorMsg("Select routes to add them to a group");
+  }
+}
+
 function parseDroppedFile(file) {
   var reader = new FileReader();
   return new Promise((resolve, reject) => {
@@ -722,8 +822,8 @@ function createGroup(name) {
   addGroupToDb(group);
 }
 
-function deleteGroup(name) {
-  var group = findGroup(name);
+function deleteGroup(id) {
+  var group = findGroup(id);
   groups = groups.filter(item => item !== group);
   removeGroupFromDb(group);
 
@@ -733,18 +833,18 @@ function deleteGroup(name) {
   });
 }
 
-function findGroup(name) {
+function findGroup(id) {
   for (var i = 0; i < groups.length; i++) {
     var group = groups[i];
-    if (group.name == name) {
+    if (group.id == id) {
       return group;
     }
   }
-  throw "Unknown group " + name;
+  throw "Unknown group ID " + id;
 }
 
-function addRoutesToGroup(name, routes) {
-  var group = findGroup(name);
+function addRoutesToGroup(id, routes) {
+  var group = findGroup(id);
 
   for (var i = 0; i < routes.length; i++) {
     addToSetArray(group.routes, routes[i]);
@@ -753,8 +853,13 @@ function addRoutesToGroup(name, routes) {
   updateGroupInDb(group);
 }
 
-function focusGroup(name) {
-  var group = findGroup(name);
+function addSelectedRoutesToGroup(id) {
+  addRoutesToGroup(id, selectedRoutes);
+  focusGroup(id);
+}
+
+function focusGroup(id) {
+  var group = findGroup(id);
   setSelectedRoutes(group.routes);
 }
 

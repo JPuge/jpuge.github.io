@@ -75,6 +75,36 @@ body {
   width: 400px;
 }
 
-#deleteUndoDiv {
+#groupDialog {
+  width: 400px;
+}
+
+.groupList {
+  padding: 0px;
+  width: 100%;
+  margin-bottom: 0px;
+}
+
+#newGroupContainer {
+  margin-left: 10px;
+}
+
+.groupListItem {
+  list-style-type: none
+}
+
+.groupListItem div {
+  height: 50px;
+  font-size: large;
+  padding-left: 10px;
+  line-height: 50px;
+  cursor: pointer;
+}
+
+.groupListItem :hover {
+  background: #eee;
+}
+
+#snackbarDiv {
   z-index: 10000;
 }

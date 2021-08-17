@@ -22,7 +22,7 @@
       Week:  <select class="dateDropDown" id="weekSelector"></select>
     </div>
 
-    <div id="deleteUndoDiv" class="mdl-js-snackbar mdl-snackbar">
+    <div id="snackbarDiv" class="mdl-js-snackbar mdl-snackbar">
       <div class="mdl-snackbar__text"></div>
       <button class="mdl-snackbar__action" type="button"></button>
     </div>
@@ -46,6 +46,25 @@
       </div>
       <div class="mdl-dialog__actions">
         <button type="button" id="closeHelpBtn" class="mdl-button">Close</button>
+      </div>
+    </dialog>
+
+
+    <dialog id="groupDialog" class="mdl-dialog">
+      <h3 class="mdl-dialog__title" id="groupSelectorTitle">Select Group</h3>
+      <div class="mdl-dialog__content">
+        <ul class="groupList">
+          
+        </ul>
+        <form action="#">
+          <div class="mdl-textfield mdl-js-textfield" id="newGroupContainer">
+            <input class="mdl-textfield__input" type="text" id="newGroupName">
+            <label class="mdl-textfield__label" for="newGroupName">New group</label>
+          </div>
+        </form>
+      </div>
+      <div class="mdl-dialog__actions">
+        <button type="button" id="closeGroupBtn" class="mdl-button">Cancel</button>
       </div>
     </dialog>
 
