@@ -211,6 +211,8 @@ function mapKeyPress(event) {
       toggleDateSelectors();
     } else if (key == 65) { // 'a' key
       selectGroupToExtend();
+    } else if (key == 82) { // 'r' key
+      selectGroupToRemove();
     } else if (key == 71) { // 'g' key
       selectGroupToFocus();
     } else if (key == 18) { // alt key
@@ -245,8 +247,9 @@ function newGroupKeyUp(event) {
   var key = event.keyCode || event.charCode;
   if (key == 13) {
     if (newGroupName.value.length > 0) {
-      createGroup(newGroupName.value);
-      updateGroupSelector(groupSelectorCallback);
+      createGroup(newGroupName.value, function() {
+        updateGroupSelector(groupSelectorCallback);
+      });
     }
   }
 }
@@ -276,6 +279,8 @@ function toggleHelp() {
 }
 
 var groupSelectorCallback = null;
+var groupSelectorGroups = null;
+var groupSelectorDelete = false;
 
 function groupSelectorClick(id) {
   hideGroupSelector();
@@ -284,11 +289,23 @@ function groupSelectorClick(id) {
   }
 }
 
+function groupDeletorClick(id) {
+  hideGroupSelector();
+  deleteGroup(id);
+}
+
 function updateGroupSelector() {
   var groupListItems = "";
-  for (var i = 0; i < groups.length; i++) {
-    var group = groups[i];
-    groupListItems += "<li class=\"groupListItem\" onclick=\"groupSelectorClick(" + group.id + ")\"><div>" + group.name + "</div></li>";
+  for (var i = 0; i < groupSelectorGroups.length; i++) {
+    var group = groupSelectorGroups[i];
+    groupListItems += '<div class="groupListItem mdl-list__item"> \
+        <span class="mdl-list__item-primary-content" onclick="groupSelectorClick(' + group.id + ')"> \
+          <span>' + group.name + '</span> \
+        </span>';
+    if (groupSelectorDelete) {
+      groupListItems += '<a class="mdl-list__item-secondary-action" onclick="groupDeletorClick(' + group.id + ')"><i class="material-icons">delete</i></a>';
+    }
+    groupListItems += '</div>';
   }
 
   newGroupName.value = "";
@@ -298,8 +315,10 @@ function updateGroupSelector() {
   groupList.innerHTML = groupListItems;
 }
 
-function showGroupSelector(callback, title, newGroupInput) {
+function showGroupSelector(callback, title, groups, newGroupInput, removeOption) {
   groupSelectorCallback = callback;
+  groupSelectorGroups = groups;
+  groupSelectorDelete = removeOption;
 
   updateGroupSelector();
 
@@ -673,18 +692,29 @@ function updateSelectedRoutesLength() {
 }
 
 function selectGroupToFocus() {
-  showGroupSelector(focusGroup, "Select Group", true);
+  showGroupSelector(focusGroup, "Select Group", groups, true, true);
 }
 
 function selectGroupToExtend() {
   if (selectedRoutes.length > 0) {
     if (groups.length > 0) {
-      showGroupSelector(addSelectedRoutesToGroup, "Add to Group", false);
+      showGroupSelector(addSelectedRoutesToGroup, "Add to Group", groups, false, false);
     } else {
       showErrorMsg("Create a group first by pressing 'g'");
     }
   } else {
     showErrorMsg("Select routes to add them to a group");
+  }
+}
+
+function selectGroupToRemove() {
+  if (selectedRoutes.length > 0) {
+    var selectedRoutesGroups = findRoutesGroups(selectedRoutes);
+    if (selectedRoutesGroups.length > 0) {
+      showGroupSelector(removeSelectedRoutesFromGroup, "Remove from Group", selectedRoutesGroups, false, false);
+    } else {
+      showErrorMsg("The selected routes does not belong to any groups");
+    }
   }
 }
 
@@ -814,14 +844,14 @@ function findRoutesByIDs(routeIds) {
 }
 
 /******** Group functions ***********/
-function createGroup(name) {
+function createGroup(name, callback) {
   var group = {
     name: name,
     routes: []
   };
 
   groups.push(group);
-  addGroupToDb(group);
+  addGroupToDb(group, callback);
 }
 
 function deleteGroup(id) {
@@ -831,7 +861,7 @@ function deleteGroup(id) {
 
   showUndoGroupDelete(async function(event) {
     groups.push(group);
-    addGroupToDb(group);
+    addGroupToDb(group, function() {});
   });
 }
 
@@ -860,9 +890,52 @@ function addSelectedRoutesToGroup(id) {
   focusGroup(id);
 }
 
+function removeRoutesFromGroup(id, routes) {
+  var group = findGroup(id);
+
+  for (var i = 0; i < routes.length; i++) {
+    var route = routes[i];
+    group.routes = group.routes.filter(item => item !== route);
+  }
+
+  updateGroupInDb(group);
+}
+
+function removeSelectedRoutesFromGroup(id) {
+  removeRoutesFromGroup(id, selectedRoutes);
+  focusGroup(id);
+}
+
 function focusGroup(id) {
   var group = findGroup(id);
   setSelectedRoutes(group.routes);
+}
+
+function findRouteGroups(route) {
+  var foundGroups = [];
+
+  for (var i = 0; i < groups.length; i++) {
+    var group = groups[i];
+    if (group.routes.includes(route)) {
+      foundGroups.push(group);
+    }
+  }
+
+  return foundGroups;
+}
+
+function findRoutesGroups(routes) {
+  var foundGroups = [];
+
+  for (var i = 0; i < routes.length; i++) {
+    var route = routes[i];
+    var routeGroups = findRouteGroups(route);
+    for (var j = 0; j < routeGroups.length; j++) {
+      addToSetArray(foundGroups, routeGroups[j]);
+    }
+  }
+
+  return foundGroups;
 }
 
 /******** Map functions ***********/
@@ -1183,7 +1256,7 @@ function groupExists(route) {
   });
 }
 
-async function addGroupToDb(group) {
+async function addGroupToDb(group, callback) {
   var dbGroup = {
     name: group.name,
     routeIds: group.routes.map(route => route.id)
@@ -1199,6 +1272,7 @@ async function addGroupToDb(group) {
   var request = objectStore.add(dbGroup);
   request.onsuccess = async function(event) {
     group.id = event.target.result;
+    callback();
   };
 }
 

@@ -86,19 +86,28 @@ body {
 }
 
 #newGroupContainer {
-  margin-left: 10px;
+  margin-left: 20px;
 }
 
 .groupListItem {
-  list-style-type: none
-}
-
-.groupListItem div {
   height: 50px;
   font-size: large;
-  padding-left: 10px;
+  padding: 0px !important;
   line-height: 50px;
   cursor: pointer;
+}
+
+.groupListItem span {
+  height: 100%;
+  line-height: 50px;
+  padding-left: 10px;
+  cursor: pointer;
+}
+
+.groupListItem a {
+  cursor: pointer;
+  line-height: 50px;
+  padding-top: 10px;
 }
 
 .groupListItem :hover {
