@@ -430,6 +430,8 @@ function initUI() {
   weekSelector.addEventListener('change', function() { dateSelectorsChanged(false, false) });
 
   newGroupName.addEventListener('keyup', newGroupKeyUp);
+
+  window.onblur = shrinkRoutes;
 }
 
 function round(number) {
