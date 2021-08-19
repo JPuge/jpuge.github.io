@@ -508,10 +508,12 @@ function updateRouteInfo(route) {
   if (route != null) {
     currentHighlightedRoute = route;
     var time = timeMsToStr(getRoutesDuration([route]));
-    routeInfoDiv.innerHTML = route.name + " - <b>" + round(route.length) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
+    routeInfoDiv.innerHTML = route.name + " - <b>" + round(route.length) + "</b> km" + 
+      (extendedInfo ? "<br/>" + route.startTime.toLocaleDateString("en-UK") + " - " + time : "");
   } else if (selectedRoutes.length == 1) {
     var time = timeMsToStr(getRoutesDuration(selectedRoutes));
-    routeInfoDiv.innerHTML = selectedRoutes[0].name + " - <b>" + round(selectedRoutes[0].length) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
+    routeInfoDiv.innerHTML = selectedRoutes[0].name + " - <b>" + round(selectedRoutes[0].length) + "</b> km" + 
+      (extendedInfo ? "<br/>" + selectedRoutes[0].startTime.toLocaleDateString("en-UK") + " - " + time : "");
   } else {
     if (selectedRoutesLength > 0) {
       var time = timeMsToStr(getRoutesDuration(selectedRoutes));
