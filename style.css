@@ -34,6 +34,9 @@ body {
 }
 
 #routeInfo {
+  padding: 10px;
+  line-height: 20px;
+  height: 20px;
   bottom: 0px;
   cursor: pointer;
   display: none;
@@ -41,6 +44,7 @@ body {
   vertical-align: middle;
   width: 300px;
   z-index: 1000000;
+  transition: height 0.5s
 }
 
 #helpBtn {

@@ -17,6 +17,7 @@ var groups = [];
 var routeInfoDiv;
 var mapDiv;
 
+var extendedInfo = false;
 var ctrlDown = false;
 
 /******** GPX file and route parsing ***********/
@@ -215,6 +216,8 @@ function mapKeyPress(event) {
       selectGroupToRemove();
     } else if (key == 71) { // 'g' key
       selectGroupToFocus();
+    } else if (key == 73) { // 'i' key
+      toggleExtendedRouteInfo();
     } else if (key == 18) { // alt key
       enlargeRoutes();
     } else {
@@ -457,14 +460,58 @@ function round(number) {
   return Math.round(number * 100) / 100;
 }
 
+function getRoutesDuration(routes) {
+  return routes.reduce(function (val, curRoute) {
+    if (curRoute.startTime == null) {
+      return val;
+    } else {
+      return val + (curRoute.endTime - curRoute.startTime);
+    }
+  }, 0);
+}
+
+function timeMsToStr(timeMs) {
+  var msPerSecond = 1000;
+  var msPerMinute = msPerSecond * 60;
+  var msPerHour = msPerMinute * 60;
+  var msPerDay = msPerHour * 24;
+
+  var days = Math.floor(timeMs / msPerDay);
+  timeMs -= days * msPerDay;
+
+  var hours = Math.floor(timeMs / msPerHour);
+  timeMs -= hours * msPerHour;
+
+  var minutes = Math.floor(timeMs / msPerMinute);
+  timeMs -= minutes * msPerMinute;
+
+  return (days > 0 ? "<b>" + days + "</b> day" + (days != 1 ? "s " : " ") : "") +
+    (days > 0 || hours > 0 ? "<b>" + hours + "</b> hour" + (hours != 1 ? "s " : " ") : "") +
+    "<b>" + minutes + "</b> minute" + (minutes > 1 ? "s" : "");
+}
+
+function toggleExtendedRouteInfo() {
+  if (extendedInfo) {
+    routeInfoDiv.style.height = "20px";
+  } else {
+    routeInfoDiv.style.height = "40px";
+  }
+
+  extendedInfo = !extendedInfo;
+  updateRouteInfo(null);
+}
+
 function updateRouteInfo(route) {
   if (route != null) {
-    routeInfoDiv.innerHTML = route.name + " - <b>" + round(route.length) + "</b> km";
+    var time = timeMsToStr(getRoutesDuration([route]));
+    routeInfoDiv.innerHTML = route.name + " - <b>" + round(route.length) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
   } else if (selectedRoutes.length == 1) {
-    routeInfoDiv.innerHTML = selectedRoutes[0].name + " - <b>" + round(selectedRoutes[0].length) + "</b> km";
+    var time = timeMsToStr(getRoutesDuration(selectedRoutes));
+    routeInfoDiv.innerHTML = selectedRoutes[0].name + " - <b>" + round(selectedRoutes[0].length) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
   } else {
     if (selectedRoutesLength > 0) {
-      routeInfoDiv.innerHTML = "<b>" + round(selectedRoutesLength) + "</b> km";
+      var time = timeMsToStr(getRoutesDuration(selectedRoutes));
+      routeInfoDiv.innerHTML = "<b>" + round(selectedRoutesLength) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
     } else {
       clearRouteInfo();
       return;
