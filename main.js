@@ -261,6 +261,7 @@ function newGroupKeyUp(event) {
 var dateSelectors, yearSelector, monthSelector, weekSelector;
 var helpBtn, helpDialog, closeHelpBtn, groupDialog, closeGroupBtn, groupList;
 var newGroupName, groupSelectorTitle, newGroupContainer, errorMsgDiv;
+var currentHighlightedRoute = null;
 var helpShown = false, groupSelectShown = false;
 
 function hideHelp() {
@@ -498,11 +499,14 @@ function toggleExtendedRouteInfo() {
   }
 
   extendedInfo = !extendedInfo;
-  updateRouteInfo(null);
+  updateRouteInfo(currentHighlightedRoute);
 }
 
 function updateRouteInfo(route) {
+  currentHighlightedRoute = null;
+
   if (route != null) {
+    currentHighlightedRoute = route;
     var time = timeMsToStr(getRoutesDuration([route]));
     routeInfoDiv.innerHTML = route.name + " - <b>" + round(route.length) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
   } else if (selectedRoutes.length == 1) {
