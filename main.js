@@ -1025,8 +1025,8 @@ var selectionBoxEnd;
 
 var selectionBoxStyle = {
   color: "#6e8f5e",
-  opacity: 0.7,
-  weight: 3,
+  opacity: 0.4,
+  weight: 2,
   fill: true,
   fillColor: "#6e8f5e",
   fillOpacity: 0.3 
