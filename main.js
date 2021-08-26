@@ -227,6 +227,7 @@ function mapKeyPress(event) {
 
   if (key == 17) { // ctrl key
     ctrlDown = true;
+    mapDiv.style.cursor = "pointer";
   } else if (key == 191) { // '?' key
     toggleHelp();
   }
@@ -240,6 +241,7 @@ function mapKeyRelease(event) {
   var key = event.keyCode || event.charCode;
   if (key == 17) { // ctrl key
     ctrlDown = false;
+    mapDiv.style.cursor = "";
     removeSelectionBox(false);
   } else if (key == 18) { // alt key
     shrinkRoutes();
