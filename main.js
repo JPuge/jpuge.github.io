@@ -1,361 +1,1636 @@
-/******** Global route variables ***********/
-var routes = [];
-var selectedRoutes = [];
-var selectedRoutesLength = 0;
+class App {
+  // These are not made private to expose them in the debug console
+  help;
+  snackBar;
+  routeInfo;
+  dateSelectors;
+  selectedRoutes;
+  fileParser;
+  storage;
+  groupSelector;
+  map;
+  groups;
+  routes;
+  controller;
 
-var allYears = [];
-var allMonths = [];
-var allWeeks = [];
+  constructor() {
+    this.help = new Help();
+    this.snackBar = new SnackBar()
 
-var routesHidden = false;
+    this.routeInfo = new RouteInfo();
+    this.dateSelectors = new DateSelectors();
+    this.selectedRoutes = new SelectedRoutes(this.dateSelectors, this.routeInfo, this.snackBar);
 
+    this.groups = new Groups(this.selectedRoutes, this.snackBar);
+    this.groupSelector = new GroupSelector(this.groups, this.selectedRoutes, this.snackBar);
 
-/******** Global group variables ***********/
-var groups = [];
+    this.map = new MapUI(this.selectedRoutes, this.routeInfo);
+    this.routes = new Routes(this.dateSelectors, this.map);
 
-/******** Global UI variables ***********/
-var routeInfoDiv;
-var mapDiv;
+    this.storage = new Storage(this.routes, this.groups, this.dateSelectors);
+    this.fileParser = new FileParser(this.routes, this.selectedRoutes);
 
-var extendedInfo = false;
-var ctrlDown = false;
+    this.controller = new Controller(this.dateSelectors, this.fileParser, 
+                                      this.help, this.groupSelector, this.map, 
+                                      this.routeInfo, this.selectedRoutes);
 
-/******** GPX file and route parsing ***********/
-async function parseRoutes(gpx) {
-  var routes = [];
+    this.dateSelectors.setSelectedRoutes(this.selectedRoutes);
+    this.dateSelectors.setRoutes(this.routes);
+    this.groups.setStorage(this.storage);
+    this.routes.setStorage(this.storage);
+    this.routeInfo.setSelectedRoutes(this.selectedRoutes);
+    this.selectedRoutes.setMap(this.map);
+    this.selectedRoutes.setRoutes(this.routes);
 
-  var parser = new DOMParser();
-  gpxDOM = parser.parseFromString(gpx, "text/xml");
+    this.storage.load();
+    this.map.showCurrentPosition();
+  }
+}
 
-  var tracks = gpxDOM.getElementsByTagName("trk");
-  for (var i = 0; i < tracks.length; i++) {
-    var track = tracks[i];
+class FileParser {
+  #routes;
+  #selectedRoutes;
 
-    var name = "";
-    var nameTag = track.getElementsByTagName("name")[0];
-    if (nameTag) {
-      name = nameTag.textContent;
+  constructor(routes, selectedRoutes) {
+    this.#routes = routes;
+    this.#selectedRoutes = selectedRoutes;
+  }
+
+  async #parseRoutes(gpx) {
+    let routes = [];
+
+    let parser = new DOMParser();
+    let gpxDOM = parser.parseFromString(gpx, "text/xml");
+
+    let tracks = gpxDOM.getElementsByTagName("trk");
+    for (let i = 0; i < tracks.length; i++) {
+      let track = tracks[i];
+
+      let name = "";
+      let nameTag = track.getElementsByTagName("name")[0];
+      if (nameTag) {
+        name = nameTag.textContent;
+      }
+
+      let segments = track.getElementsByTagName("trkseg");
+      for (let j = 0; j < segments.length; j++) {
+        let segment = segments[j];
+
+        let startTime;
+        let endTime;
+        let points = [];
+        let trkpts = segment.getElementsByTagName("trkpt");
+        for (let k = 0; k < trkpts.length; k++) {
+          let trkpt = trkpts[k];
+          let firstPoint = (k == 0);
+          let lastPoint = (k == trkpts.length - 1);
+
+          let lat = parseFloat(trkpt.getAttribute("lat"));
+          let lon = parseFloat(trkpt.getAttribute("lon"));
+          let point = {
+            lat: lat, lng: lon
+          };
+          points.push(point);
+
+          let timeTags = trkpt.getElementsByTagName("time");
+          if (timeTags.length > 0) {
+            let time = new Date(timeTags[0].textContent);
+            if (firstPoint) {
+              startTime = time;
+            } else if (lastPoint) {
+              endTime = time;
+            }
+          }
+        }
+
+        let newRoute = {
+          name: name,
+          points: points,
+          length: this.#routeLength(points),
+          startTime: startTime,
+          endTime: endTime,
+          hash: await this.#routeHash(points),
+          visible: true,
+          selected: false
+        };
+
+        routes.push(newRoute);
+      }
     }
 
-    var segments = track.getElementsByTagName("trkseg");
-    for (var j = 0; j < segments.length; j++) {
-      var segment = segments[j];
+    return routes;
+  }
 
-      var startTime;
-      var endTime;
-      var points = [];
-      var trkpts = segment.getElementsByTagName("trkpt");
-      for (var k = 0; k < trkpts.length; k++) {
-        var trkpt = trkpts[k];
-        var firstPoint = (k == 0);
-        var lastPoint = (k == trkpts.length - 1);
+  #degreesToRadians(degrees) {
+    return degrees * Math.PI / 180;
+  }
 
-        var lat = parseFloat(trkpt.getAttribute("lat"));
-        var lon = parseFloat(trkpt.getAttribute("lon"));
-        var point = {
-          lat: lat, lng: lon
-        };
-        points.push(point);
+  #distanceInKmBetweenPoints(point1, point2) {
+    let earthRadiusKm = 6371;
 
-        var timeTags = trkpt.getElementsByTagName("time");
-        if (timeTags.length > 0) {
-          var time = new Date(timeTags[0].textContent);
-          if (firstPoint) {
-            startTime = time;
-          } else if (lastPoint) {
-            endTime = time;
-          }
+    let dLat = this.#degreesToRadians(point2.lat-point1.lat);
+    let dLng = this.#degreesToRadians(point2.lng-point1.lng);
+
+    let dLat1 = this.#degreesToRadians(point1.lat);
+    let dLat2 = this.#degreesToRadians(point2.lat);
+
+    let a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.sin(dLng/2) * Math.sin(dLng/2) * Math.cos(dLat1) * Math.cos(dLat2); 
+    let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    return earthRadiusKm * c;
+  }
+
+  #routeLength(points) {
+    let length = 0;
+
+    let prevPoint = points[0];
+
+    for (let i = 1; i < points.length; i++) {
+      length += this.#distanceInKmBetweenPoints(prevPoint, points[i]);
+      prevPoint = points[i];
+    }
+
+    return length;
+  }
+
+  async #routeHash(points) {
+    let pointMsg = points.map(point => point.lat + point.lng).toString();
+
+    // encode as UTF-8
+    const msgBuffer = new TextEncoder().encode(pointMsg);
+
+    // hash the message
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+
+    // convert ArrayBuffer to Array
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+    // convert bytes to hex string
+    const hashHex = hashArray.map(b => ('00' + b.toString(16)).slice(-2)).join('');
+    return hashHex;
+  }
+
+  async #addGpxFile(gpxRoute) {
+    let fileRoutes = await this.#parseRoutes(gpxRoute);
+    return await this.#routes.addRoutes(fileRoutes);
+  }
+
+  #parseDroppedFile(file) {
+    let reader = new FileReader();
+    return new Promise((resolve, reject) => {
+      reader.onload = async e => { 
+        let routes = await this.#addGpxFile(e.target.result);
+        resolve(routes);
+      }
+      reader.readAsText(file);
+    });
+  }
+
+  parseDroppedFiles(files) {
+    let promises = [];
+    for (let i = 0; i < files.length; i++) {
+      promises.push(this.#parseDroppedFile(files[i]));
+    }
+
+    Promise.all(promises).then(routeFiles => {
+      let newRoutes = [];
+      for (let i = 0; i < routeFiles.length; i++) {
+        for (let j = 0; j < routeFiles[i].length; j++) {
+          newRoutes = newRoutes.concat(routeFiles[i][j]);
         }
       }
 
-      var newRoute = {
-        name: name,
-        points: points,
-        length: routeLength(points),
-        startTime: startTime,
-        endTime: endTime,
-        hash: await routeHash(points),
-        visible: true,
-        selected: false
-      };
+      if (newRoutes.length != 0) {
+        this.#selectedRoutes.set(newRoutes);
+      }
+    });
+  }
+}
 
-      routes.push(newRoute);
+
+class Routes {
+  #dateSelectors;
+  #map;
+  #storage;
+
+  #allRoutes = [];
+
+  #allYears = [];
+  #allMonths = [];
+  #allWeeks = [];
+
+  constructor(dateSelectors, map) {
+    this.#dateSelectors = dateSelectors;
+    this.#map = map;
+  }
+
+  setStorage(storage) {
+    this.#storage = storage;
+  }
+
+  #routeExists(route) {
+    return this.#storage.lookupRoute(route, function(getter, resolve) {
+      if (!getter.result) {
+        resolve(false);
+      } else {
+        resolve(true);
+      }
+    });
+  }
+
+  get(i = null) {
+    if (i == null) {
+      return this.#allRoutes;
+    } else {
+      return this.#allRoutes[i];
     }
   }
 
-  return routes;
-}
-
-function degreesToRadians(degrees) {
-  return degrees * Math.PI / 180;
-}
-
-function distanceInKmBetweenPoints(point1, point2) {
-  var earthRadiusKm = 6371;
-
-  var dLat = degreesToRadians(point2.lat-point1.lat);
-  var dLng = degreesToRadians(point2.lng-point1.lng);
-
-  var dLat1 = degreesToRadians(point1.lat);
-  var dLat2 = degreesToRadians(point2.lat);
-
-  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-          Math.sin(dLng/2) * Math.sin(dLng/2) * Math.cos(dLat1) * Math.cos(dLat2); 
-  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-  return earthRadiusKm * c;
-}
-
-function routeLength(points) {
-  var length = 0;
-
-  var prevPoint = points[0];
-
-  for (var i = 1; i < points.length; i++) {
-    length += distanceInKmBetweenPoints(prevPoint, points[i]);
-    prevPoint = points[i];
+  push(route) {
+    this.#allRoutes.push(route);
+    this.#map.drawRoute(route);
   }
 
-  return length;
-}
+  count() {
+    return this.#allRoutes.length;
+  }
 
-function routesCenter(routes) {
-  var latSum = 0;
-  var lngSum = 0;
-  var pointCount = 0;
+  async addRoutes(addedRoutes) {
+    let newRoutes = [];
 
-  for (var i = 0; i < routes.length; i++) {
-    for (var j = 0; j < routes[i].points.length; j++) {
-      var point = routes[i].points[j];
-      latSum += point.lat;
-      lngSum += point.lng;
-      pointCount += 1;
+    for (let i = 0; i < addedRoutes.length; i++) {
+      let route = addedRoutes[i];
+      if (await this.#routeExists(route)) {
+        console.log("Route already exists: " + route.name);
+      } else {
+        newRoutes.push(route);
+        this.#map.drawRoute(route);
+        this.addToDateOverview(route);
+        this.#storage.addRoute(route);
+      }
+    }
+
+    this.#allRoutes = this.#allRoutes.concat(newRoutes);
+
+    this.#dateSelectors.update();
+
+    return newRoutes;
+  }
+
+  remove(routesToRemove) {
+    let removedRoutes = [];
+
+    for (let i = 0; i < routesToRemove.length; i++) {
+      let route = routesToRemove[i];
+      this.#allRoutes = this.#allRoutes.filter(item => item !== route);
+      this.#storage.removeRoute(route);
+      this.#map.removeRoute(route);
+
+      removedRoutes.push(route);
+    }
+
+    return removedRoutes;
+  }
+
+  addToDateOverview(route) {
+    if (!route.startTime) return;
+
+    addToSetArray(this.#allYears, route.startTime.getFullYear());
+    addToSetArray(this.#allMonths, route.startTime.getMonth());
+    addToSetArray(this.#allWeeks, route.startTime.getWeek());
+  }
+
+  rebuildDateOverview() {
+    this.#allYears = [];
+    this.#allMonths = [];
+    this.#allWeeks = [];
+
+    for (let i = 0; i < this.#allRoutes.length; i++) {
+      this.addToDateOverview(this.#allRoutes[i]);
     }
   }
 
-  return {
-    lat: latSum / pointCount,
-    lng: lngSum / pointCount
+  findRoutesByIDs(routeIds) {
+    let routeIdHash = {};
+    for (let i = 0; i < this.count(); i++) {
+      let route = this.get(i);
+      routeIdHash[route.id] = route;
+    }
+
+    let foundRoutes = [];
+    for (let i = 0; i < routeIds.length; i++) {
+      let routeId = routeIds[i];
+      if (routeIdHash.hasOwnProperty(routeId)) {
+        foundRoutes.push(routeIdHash[routeId]);
+      } else {
+        console.log("Unknown route ID: " + routeId);
+      }
+    }
+
+    return foundRoutes;
   }
 }
 
-async function routeHash(points) {
-  var pointMsg = points.map(point => point.lat + point.lng).toString();
 
-  // encode as UTF-8
-  const msgBuffer = new TextEncoder().encode(pointMsg);
+class Controller {
+  #dateSelectors;
+  #fileParser;
+  #groupSelector;
+  #help;
+  #map;
+  #routeInfo;
+  #selectedRoutes;
 
-  // hash the message
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  #ignoreDefaults(e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
 
-  // convert ArrayBuffer to Array
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  #mapKeyPress(event) {
+    let key = event.keyCode || event.charCode;
+    let keyHandled = true;
 
-  // convert bytes to hex string
-  const hashHex = hashArray.map(b => ('00' + b.toString(16)).slice(-2)).join('');
-  return hashHex;
+    if (this.#help.visible()) {
+      if (key == 27) { // esc key
+        this.#help.hide();
+      }
+    } else if (this.#groupSelector.visible()) {
+      if (key == 27) { // esc key
+        this.#groupSelector.hide();
+      } else if (event.target != document.querySelector("#newGroupName")) {
+        if (key == 71 || key == 65 || key == 82) { // 'g', 'a', or 'r' key
+          this.#groupSelector.hide();
+        }
+      } else {
+        keyHandled = false;
+      }
+    } else {
+      if (key == 46) { // delete key
+        this.#selectedRoutes.delete();
+      } else if (key == 84) { // 't' key
+        this.#map.toggleTrails();
+      } else if (key == 27) { // esc key
+        this.#selectedRoutes.clear();
+      } else if (key == 72) { // 'h' key
+        this.#map.toggleHiddenSelectedRoutes();
+      } else if (key == 68) { // 'd' key
+        this.#dateSelectors.toggle();
+      } else if (key == 65) { // 'a' key
+        this.#groupSelector.selectGroupToExtend();
+      } else if (key == 82) { // 'r' key
+        this.#groupSelector.selectGroupToRemove();
+      } else if (key == 71) { // 'g' key
+        this.#groupSelector.selectGroupToFocus();
+      } else if (key == 73) { // 'i' key
+        this.#routeInfo.toggleExtendedInfo();
+      } else if (key == 18) { // alt key
+        this.#map.enlargeRoutes();
+      } else {
+        keyHandled = false;
+      }  
+    }
+
+    if (key == 17) { // ctrl key
+      this.#map.enableSelectionBox(true);
+    } else if (key == 191) { // '?' key
+      this.#help.toggle();
+    }
+
+    if (keyHandled) {
+      this.#ignoreDefaults(event);
+    }
+  }
+
+  #mapKeyRelease(event) {
+    let key = event.keyCode || event.charCode;
+    if (key == 17) { // ctrl key
+      this.#map.enableSelectionBox(false);
+      this.#map.removeSelectionBox(false);
+    } else if (key == 18) { // alt key
+      this.#map.shrinkRoutes();
+    }
+  }
+
+  #filesDropped(e) {
+    e.stopPropagation();
+    e.preventDefault();
+
+    let files = e.target.files || e.dataTransfer.files;
+    this.#fileParser.parseDroppedFiles(files);
+  }
+
+  constructor(dateSelectors, fileParser, help, groupSelector, map, routeInfo, selectedRoutes) {
+    this.#dateSelectors = dateSelectors;
+    this.#fileParser = fileParser;
+    this.#groupSelector = groupSelector;
+    this.#help = help;
+    this.#map = map;
+    this.#routeInfo = routeInfo;
+    this.#selectedRoutes = selectedRoutes;
+
+    let mapDiv = map.getDiv();
+    mapDiv.addEventListener("dragover", this.#ignoreDefaults.bind(this));
+    mapDiv.addEventListener("dragenter", this.#ignoreDefaults.bind(this));
+    mapDiv.addEventListener("dragleave", this.#ignoreDefaults.bind(this));
+    mapDiv.addEventListener("drop", this.#filesDropped.bind(this));
+    mapDiv.addEventListener("keydown", this.#mapKeyPress.bind(this));
+    mapDiv.addEventListener("keyup", this.#mapKeyRelease.bind(this));
+
+    document.body.addEventListener("keydown", this.#mapKeyPress.bind(this));
+    document.body.addEventListener("keyup", this.#mapKeyRelease.bind(this));
+
+    window.onblur = () => map.shrinkRoutes();
+  }
 }
 
+class Help {
+  #helpShown = false;
+  #helpBtn = null;
+  #helpDialog = null;
+  #closeHelpBtn = null;
+
+  constructor() {
+    this.#helpBtn = document.querySelector("#helpBtn");
+    this.#helpDialog = document.querySelector("#helpDialog");
+    this.#closeHelpBtn = document.querySelector("#closeHelpBtn");
+
+    helpBtn.addEventListener('click', this.show.bind(this));
+    closeHelpBtn.addEventListener('click', this.hide.bind(this));
+  }
+
+  hide() {
+    this.#helpDialog.close();
+    this.#helpShown = false;
+  }
+
+  show() {
+    this.#helpDialog.showModal();
+    this.#helpShown = true;
+  }
+
+  toggle() {
+    if (this.#helpShown) {
+      this.hide();
+    } else {
+      this.show();
+    }
+  }
+
+  visible() {
+    return this.#helpShown;
+  }
+}
+
+class GroupSelector {
+  #groups;
+  #selectedRoutes;
+  #snackBar;
+
+  #groupSelectShown = false;
+  #groupSelectorCallback = null;
+  #groupSelectorGroups = null;
+  #groupSelectorDelete = false;
+
+  #groupDialog = null;
+  #closeGroupBtn = null;
+  #groupList = null;
+  #newGroupName = null;
+  #groupSelectorTitle = null;
+  #newGroupContainer = null;
+
+  #newGroupKeyUp(event) {
+    let key = event.keyCode || event.charCode;
+    if (key == 13) {
+      if (this.#newGroupName.value.length > 0) {
+        this.#groups.create(this.#newGroupName.value, () => this.update());
+      }
+    }
+  }
+
+  constructor(groups, selectedRoutes, snackBar) {
+    this.#groups = groups;
+    this.#selectedRoutes = selectedRoutes;
+    this.#snackBar = snackBar;
+
+    this.#closeGroupBtn = document.querySelector("#closeGroupBtn");
+    this.#groupDialog = document.querySelector("#groupDialog");
+    this.#groupList = document.querySelector(".groupList");
+    this.#groupSelectorTitle = document.querySelector("#groupSelectorTitle");
+    this.#newGroupContainer = document.querySelector("#newGroupContainer");
+    this.#newGroupName = document.querySelector("#newGroupName");
+
+    this.#closeGroupBtn.addEventListener('click', this.hide.bind(this));
+    this.#newGroupName.addEventListener('keyup', this.#newGroupKeyUp.bind(this));
+  }
+
+  groupClick(id) {
+    this.hide();
+    if (this.#groupSelectorCallback) {
+      this.#groupSelectorCallback(id);
+    }
+  }
+
+  deleteClick(id) {
+    this.hide();
+    this.#groups.remove(id);
+  }
+
+  update() {
+    let groupListItems = "";
+    for (let i = 0; i < this.#groupSelectorGroups.length; i++) {
+      let group = this.#groupSelectorGroups[i];
+      groupListItems += '<div class="groupListItem mdl-list__item"> \
+          <span class="mdl-list__item-primary-content" onclick="app.groupSelector.groupClick(' + group.id + ')"> \
+            <span>' + group.name + '</span> \
+          </span>';
+      if (this.#groupSelectorDelete) {
+        groupListItems += '<a class="mdl-list__item-secondary-action" onclick="app.groupSelector.deleteClick(' + group.id + ')"><i class="material-icons">delete</i></a>';
+      }
+      groupListItems += '</div>';
+    }
+
+    this.#newGroupName.value = "";
+    this.#newGroupName.parentElement.MaterialTextfield.change();
+    this.#closeGroupBtn.focus();
+
+    this.#groupList.innerHTML = groupListItems;
+  }
+
+  #show(callback, title, groups, newGroupInput, removeOption) {
+    this.#groupSelectorCallback = callback;
+    this.#groupSelectorGroups = groups;
+    this.#groupSelectorDelete = removeOption;
+
+    this.update();
+
+    this.#groupSelectorTitle.innerText = title;
+    this.#newGroupContainer.style.display = (newGroupInput ? "inline-block" : "none");
+
+    this.#groupDialog.showModal();
+    this.#closeGroupBtn.focus();
+    this.#groupSelectShown = true;
+  }
+
+  hide() {
+    this.#groupDialog.close();
+    this.#groupSelectShown = false;
+  }
+
+  visible() {
+    return this.#groupSelectShown;
+  }
+
+  selectGroupToFocus() {
+    this.#show(function(id) { this.#groups.focusGroup(id) }, "Select Group", this.#groups.get(), true, true);
+  }
+
+  selectGroupToExtend() {
+    if (this.#selectedRoutes.length() > 0) {
+      if (this.#groups.get().length > 0) {
+        this.#show(function(id) { this.#groups.addSelectedRoutesToGroup(id) }, "Add to Group", this.#groups.get(), false, false);
+      } else {
+        this.#snackBar.showErrorMsg("Create a group first by pressing 'g'");
+      }
+    } else {
+      this.#snackBar.showErrorMsg("Select routes to add them to a group");
+    }
+  }
+
+  selectGroupToRemove() {
+    if (this.#selectedRoutes.length() > 0) {
+      let selectedRoutesGroups = this.#groups.findRoutesGroups(this.#selectedRoutes.get());
+      if (selectedRoutesGroups.length > 0) {
+        this.#show(function(id) { this.#groups.removeSelectedRoutesFromGroup(id) }, "Remove from Group", selectedRoutesGroups, false, false);
+      } else {
+        this.#snackBar.showErrorMsg("The selected routes does not belong to any groups");
+      }
+    }
+  }
+}
+
+
+class DateSelectors {
+  #routes;
+  #selectedRoutes;
+
+  #dateSelectorsDiv = null;
+  #yearSelector = null;
+  #monthSelector = null;
+  #weekSelector = null;
+
+  constructor() {
+    this.#dateSelectorsDiv = document.querySelector("#dateSelectors");
+    this.#yearSelector = document.querySelector("#yearSelector");
+    this.#monthSelector = document.querySelector("#monthSelector");
+    this.#weekSelector = document.querySelector("#weekSelector");
+
+    this.#yearSelector.addEventListener('change', () => this.#dateSelectorsChanged(true, true));
+    this.#monthSelector.addEventListener('change', () => this.#dateSelectorsChanged(false, true));
+    this.#weekSelector.addEventListener('change', () => this.#dateSelectorsChanged(false, false));
+  }
+
+  setSelectedRoutes(selectedRoutes) {
+    this.#selectedRoutes = selectedRoutes;
+  }
+
+  setRoutes(routes) {
+    this.#routes = routes;
+  }
+
+  #getDateSelectorValues() {
+    return {
+      year: this.#yearSelector.value == "null" || this.#yearSelector.value == "" ? null : parseInt(this.#yearSelector.value),
+      month: this.#monthSelector.value == "null" || this.#monthSelector.value == "" ? null : parseInt(this.#monthSelector.value),
+      week: this.#weekSelector.value == "null" || this.#weekSelector.value == "" ? null : parseInt(this.#weekSelector.value)
+    }
+  }
+
+  #dateSelectorsChanged(clearMonth, clearWeek) {
+    if (clearMonth) this.#monthSelector.value = "null";
+    if (clearWeek) this.#weekSelector.value = "null";
+
+    let selectedDate = this.#getDateSelectorValues();
+    this.#selectedRoutes.selectByYMW(selectedDate.year, selectedDate.month, selectedDate.week);
+    this.update();
+  }
+
+  #getDateOptionsByYMW(year, month, week) {
+    let filteredYears = [];
+    let filteredMonths = [];
+    let filteredWeeks = [];
+
+    for (let i = 0; i < this.#routes.count(); i++) {
+      let route = this.#routes.get(i);
+
+      if ((route.startTime != null)) {
+        addToSetArray(filteredYears, route.startTime.getFullYear());
+
+        if (year == null || year == route.startTime.getFullYear()) {
+          addToSetArray(filteredMonths, route.startTime.getMonth());
+        }
+
+        if ((year == null || year == route.startTime.getFullYear()) &&
+            (month == null || month == route.startTime.getMonth())) {
+          addToSetArray(filteredWeeks, route.startTime.getWeek());
+        }
+      }
+    }
+
+    return {
+      years: filteredYears,
+      months: filteredMonths,
+      weeks: filteredWeeks
+    }
+  }
+
+  clear() {
+    this.#yearSelector.value = "null";
+    this.#monthSelector.value = "null";
+    this.#weekSelector.value = "null";
+  }
+
+  update() {
+    let selectedDate = this.#getDateSelectorValues();
+    let dateOptions = this.#getDateOptionsByYMW(selectedDate.year, selectedDate.month, selectedDate.week)
+
+    removeOptionsFromSelect(this.#yearSelector);
+    removeOptionsFromSelect(this.#monthSelector);
+    removeOptionsFromSelect(this.#weekSelector);
+
+    let monthNames = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+
+    addArrayToSelect(dateOptions.years, this.#yearSelector, year => year);
+    addArrayToSelect(dateOptions.months, this.#monthSelector, month => monthNames[month]);
+    addArrayToSelect(dateOptions.weeks, this.#weekSelector, week => week);
+
+    setSelectOptionIfPossible(this.#yearSelector, selectedDate.year);
+    setSelectOptionIfPossible(this.#monthSelector, selectedDate.month);
+    setSelectOptionIfPossible(this.#weekSelector, selectedDate.week);
+  }
+
+  toggle() {
+    this.#dateSelectorsDiv.hidden = !this.#dateSelectorsDiv.hidden;
+  }
+}
+
+
+class RouteInfo {
+  #selectedRoutes;
+
+  #currentHighlightedRoute = null;
+  #extendedInfo = false;
+  #routeInfoDiv = null;
+
+  constructor() {
+    this.#routeInfoDiv = document.getElementById("routeInfo");
+    this.#routeInfoDiv.addEventListener("click", () => this.#selectedRoutes.clear());
+  }
+
+  setSelectedRoutes(selectedRoutes) {
+    this.#selectedRoutes = selectedRoutes;
+  }
+
+  #round(number) {
+    return Math.round(number * 100) / 100;
+  }
+
+  #getRoutesDuration(routes) {
+    return routes.reduce(function (val, curRoute) {
+      if (curRoute.startTime == null) {
+        return val;
+      } else {
+        return val + (curRoute.endTime - curRoute.startTime);
+      }
+    }, 0);
+  }
+
+  #timeMsToStr(timeMs) {
+    let msPerSecond = 1000;
+    let msPerMinute = msPerSecond * 60;
+    let msPerHour = msPerMinute * 60;
+    let msPerDay = msPerHour * 24;
+
+    let days = Math.floor(timeMs / msPerDay);
+    timeMs -= days * msPerDay;
+
+    let hours = Math.floor(timeMs / msPerHour);
+    timeMs -= hours * msPerHour;
+
+    let minutes = Math.floor(timeMs / msPerMinute);
+    timeMs -= minutes * msPerMinute;
+
+    return (days > 0 ? "<b>" + days + "</b> day" + (days != 1 ? "s " : " ") : "") +
+      (days > 0 || hours > 0 ? "<b>" + hours + "</b> hour" + (hours != 1 ? "s " : " ") : "") +
+      "<b>" + minutes + "</b> minute" + (minutes > 1 ? "s" : "");
+  }
+
+  toggleExtendedInfo() {
+    if (this.#extendedInfo) {
+      this.#routeInfoDiv.style.height = "20px";
+    } else {
+      this.#routeInfoDiv.style.height = "40px";
+    }
+
+    this.#extendedInfo = !this.#extendedInfo;
+    this.update(this.#currentHighlightedRoute);
+  }
+
+  update(route) {
+    this.#currentHighlightedRoute = null;
+
+    if (route != null) {
+      this.#currentHighlightedRoute = route;
+      let time = this.#timeMsToStr(this.#getRoutesDuration([route]));
+      this.#routeInfoDiv.innerHTML = route.name + " - <b>" + this.#round(route.length) + "</b> km" + 
+        (this.#extendedInfo ? "<br/>" + route.startTime.toLocaleDateString("en-UK") + " - " + time : "");
+    } else if (this.#selectedRoutes.length() == 1) {
+      let time = this.#timeMsToStr(this.#getRoutesDuration(this.#selectedRoutes.get()));
+      this.#routeInfoDiv.innerHTML = this.#selectedRoutes[0].name + " - <b>" + this.#round(this.#selectedRoutes[0].length) + "</b> km" + 
+        (this.#extendedInfo ? "<br/>" + this.#selectedRoutes[0].startTime.toLocaleDateString("en-UK") + " - " + time : "");
+    } else {
+      if (this.#selectedRoutes.length() > 0) {
+        let time = this.#timeMsToStr(this.#getRoutesDuration(this.#selectedRoutes.get()));
+        this.#routeInfoDiv.innerHTML = "<b>" + this.#round(this.#selectedRoutes.length()) + "</b> km" + (this.#extendedInfo ? "<br/>" + time : "");
+      } else {
+        this.clear();
+        return;
+      }
+    }
+    this.#routeInfoDiv.style.display = "table-cell";
+  }
+
+  clear() {
+    if (this.#selectedRoutes.length() == 0) {
+      this.#routeInfoDiv.innerHTML = "";
+      this.#routeInfoDiv.style.display = "none";
+    }
+  }
+}
+
+
+class SnackBar {
+  #container = null;
+
+  constructor() {
+    this.#container = document.querySelector("#snackbarDiv");
+  }
+
+  showErrorMsg(text) {
+    this.#container.MaterialSnackbar.showSnackbar({
+      message: text,
+      timeout: 3000
+    });
+  }
+
+  showUndoRouteDelete(plural, undoHandler) {
+    this.#showUndoDelete(plural ? "Routes were deleted" : "Route was deleted", undoHandler);
+  }
+
+  showUndoGroupDelete(undoHandler) {
+    this.#showUndoDelete("Group was deleted", undoHandler);
+  }
+
+  #showUndoDelete(message, undoHandler) {
+    this.#container.MaterialSnackbar.showSnackbar({
+      message: message,
+      timeout: 5000,
+      actionText: "Undo",
+      actionHandler: async event => {
+        undoHandler(event);
+        this.#container.MaterialSnackbar.cleanup_();
+      }
+    });
+  }  
+}
+
+
+class SelectedRoutes {
+  #dateSelectors;
+  #map;
+  #routeInfo;
+  #routes;
+  #snackBar;
+
+  #allSelectedRoutes = [];
+  #selectedRoutesLength = 0;
+
+  constructor(dateSelectors, routeInfo, snackBar) {
+    this.#dateSelectors = dateSelectors;
+    this.#routeInfo = routeInfo;
+    this.#snackBar = snackBar;
+  }
+
+  setMap(map) {
+    this.#map = map;
+  }
+
+  setRoutes(routes) {
+    this.#routes = routes;
+  }
+
+  get() {
+    return this.#allSelectedRoutes;
+  }
+
+  clear(clearDate = true) {
+    this.#allSelectedRoutes.forEach((route) => {
+      route.selected = false;
+      this.#map.updateRouteApperance(route, "default");
+    });
+    this.#selectedRoutesLength = 0;
+    this.#allSelectedRoutes = [];
+    this.#routeInfo.clear();
+    this.#map.unhideAllRoutes();
+    if (clearDate) {
+      this.#dateSelectors.clear();
+    }
+  }
+
+  set(routes) {
+    this.clear(false);
+    this.#allSelectedRoutes = routes;
+    this.#updateSelectedRoutesLength();
+    for (let i = 0; i < routes.length; i++) {
+      routes[i].selected = true;
+      this.#map.updateRouteApperance(routes[i], "selected");
+    }
+    this.#routeInfo.update(null);
+    this.#map.zoomToRoutes(routes);
+  }
+
+  add(route) {
+    if (this.#allSelectedRoutes.includes(route)) return;
+
+    this.#allSelectedRoutes.push(route);
+    route.selected = true;
+    this.#map.updateRouteApperance(route, "selected");
+    this.#updateSelectedRoutesLength();
+    this.#routeInfo.update(null);
+  }
+
+  remove(route) {
+    if (!this.#allSelectedRoutes.includes(route)) return;
+
+    this.#allSelectedRoutes = this.#allSelectedRoutes.filter(item => item !== route);
+    route.selected = false;
+    this.#map.updateRouteApperance(route, "hovered");
+    this.#updateSelectedRoutesLength();
+    this.#routeInfo.update(route);
+  }
+
+  selectByYMW(year, month, week) {
+    if (year == null && month == null && week == null) {
+      this.clear();
+      return;
+    }
+
+    let routesInDateRange = [];
+
+    for (let i = 0; i < this.#routes.count(); i++) {
+      let route = this.#routes.get(i);
+
+      if ((route.startTime != null) && 
+          (year == null || year == route.startTime.getFullYear()) &&
+          (month == null || month == route.startTime.getMonth()) &&
+          (week == null || week == route.startTime.getWeek())) {
+        routesInDateRange.push(route);
+      }
+    }
+
+    this.set(routesInDateRange);
+    this.#map.zoomToRoutes(routesInDateRange);
+  }
+
+  length() {
+    return this.#selectedRoutesLength;
+  }
+
+  selectInBounds(startLat, startLng, endLat, endLng) {
+    let minLat = Math.min(startLat, endLat);
+    let maxLat = Math.max(startLat, endLat);
+    let minLng = Math.min(startLng, endLng);
+    let maxLng = Math.max(startLng, endLng);
+
+    for (let i = 0; i < this.#routes.count(); i++) {
+      let curRoute = this.#routes.get(i);
+
+      if (!curRoute.visible) {
+        continue;
+      }
+
+      for (let j = 0; j < curRoute.points.length; j++) {
+        let curPoint = curRoute.points[j];
+
+        if (minLat < curPoint.lat && curPoint.lat < maxLat &&
+            minLng < curPoint.lng && curPoint.lng < maxLng) {
+          this.add(curRoute);
+          break;
+        }
+      }
+    }
+  }
+
+  includes(route) {
+    return this.#allSelectedRoutes.includes(route);
+  }
+
+  #updateSelectedRoutesLength() {
+    this.#selectedRoutesLength = this.#allSelectedRoutes.reduce(function (prev, cur) {
+      return prev + cur.length;
+    }, 0);
+  }
+
+  delete() {
+    let deletedRoutes = this.#routes.remove(this.#allSelectedRoutes);
+
+    this.#allSelectedRoutes = [];
+    this.#updateSelectedRoutesLength();
+    this.#routeInfo.clear();
+    this.#routes.rebuildDateOverview();
+    this.#dateSelectors.update();
+
+    this.#snackBar.showUndoRouteDelete(deletedRoutes.length > 1, async (event) => {
+      this.#routes.addRoutes(deletedRoutes);
+      deletedRoutes = [];
+    });
+  }
+}
+
+
+class Groups {
+  #selectedRoutes;
+  #snackBar;
+  #storage;
+
+  #allGroups = [];
+
+  constructor(selectedRoutes, snackBar) {
+    this.#selectedRoutes = selectedRoutes;
+    this.#snackBar = snackBar;
+  }
+
+  setStorage(storage) {
+    this.#storage = storage;
+  }
+
+  get() {
+    return this.#allGroups;
+  }
+
+  push(group) {
+    this.#allGroups.push(group);
+  }
+
+  create(name, callback) {
+    let group = {
+      name: name,
+      routes: []
+    };
+
+    this.#allGroups.push(group);
+    this.#storage.addGroup(group, callback);
+  }
+
+  remove(id) {
+    let group = this.#findGroup(id);
+    this.#allGroups = this.#allGroups.filter(item => item !== group);
+    this.#storage.removeGroup(group);
+
+    this.#snackBar.showUndoGroupDelete(async event => {
+      this.#allGroups.push(group);
+      this.#storage.addGroup(group, function() {});
+    });
+  }
+
+  #findGroup(id) {
+    for (let i = 0; i < this.#allGroups.length; i++) {
+      let group = this.#allGroups[i];
+      if (group.id == id) {
+        return group;
+      }
+    }
+    throw "Unknown group ID " + id;
+  }
+
+  #addRoutesToGroup(id, routes) {
+    let group = this.#findGroup(id);
+
+    for (let i = 0; i < routes.length; i++) {
+      addToSetArray(group.routes, routes[i]);
+    }
+
+    this.#storage.updateGroup(group);
+  }
+
+  addSelectedRoutesToGroup(id) {
+    this.#addRoutesToGroup(id, this.#selectedRoutes.get());
+    this.focusGroup(id);
+  }
+
+  #removeRoutesFromGroup(id, routes) {
+    let group = this.#findGroup(id);
+
+    for (let i = 0; i < routes.length; i++) {
+      let route = routes[i];
+      group.routes = group.routes.filter(item => item !== route);
+    }
+
+    this.#storage.updateGroup(group);
+  }
+
+  removeSelectedRoutesFromGroup(id) {
+    this.#removeRoutesFromGroup(id, this.#selectedRoutes.get());
+    this.focusGroup(id);
+  }
+
+  focusGroup(id) {
+    let group = this.#findGroup(id);
+    this.#selectedRoutes.set(group.routes);
+  }
+
+  #findRouteGroups(route) {
+    let foundGroups = [];
+
+    for (let i = 0; i < this.#allGroups.length; i++) {
+      let group = this.#allGroups[i];
+      if (group.routes.includes(route)) {
+        foundGroups.push(group);
+      }
+    }
+
+    return foundGroups;
+  }
+
+  findRoutesGroups(routes) {
+    let foundGroups = [];
+
+    for (let i = 0; i < routes.length; i++) {
+      let route = routes[i];
+      let routeGroups = this.#findRouteGroups(route);
+      for (let j = 0; j < routeGroups.length; j++) {
+        addToSetArray(foundGroups, routeGroups[j]);
+      }
+    }
+
+    return foundGroups;
+  }
+}
+
+
+class MapUI {
+  #routeInfo;
+  #selectedRoutes;
+
+  #mapRef;
+  #mapDiv;
+  #hikingTrails = null;
+  #routesEnlarged = false;
+  #routesHidden = false;
+  #drawnRoutes = [];
+
+  #routeStyles = {
+    "default": {
+      color: "#0000CC",
+      weight: 2,
+      opacity: 0.9,
+      smothFactor: 1
+    },
+    "selected": {
+      color: "#FFD90F",
+      weight: 3,
+      opacity: 0.9,
+      smothFactor: 1
+    },
+    "hovered": {
+      color: "#CC0000",
+      weight: 3,
+      opacity: 0.9,
+      smothFactor: 1
+    },
+  };
+
+  #selectionBox = null;
+  #selectionBoxEnabled = false;
+  #selectionBoxStart = null;
+  #selectionBoxEnd = null;
+
+  #selectionBoxStyle = {
+    color: "#6e8f5e",
+    opacity: 0.4,
+    weight: 2,
+    fill: true,
+    fillColor: "#6e8f5e",
+    fillOpacity: 0.3 
+  };
+
+  constructor(selectedRoutes, routeInfo) {
+    this.#routeInfo = routeInfo;
+    this.#selectedRoutes = selectedRoutes;
+
+    this.#mapDiv = document.getElementById("mapDiv");
+
+    this.#mapRef = L.map('mapDiv').setView({
+      lat: 55.50841618187183,
+      lng: 11.593322753906252
+    }, 9);
+
+    this.#mapRef.on('click', (ev) => {
+      this.toggleSelectionBox(ev.latlng);
+    });
+    this.#mapRef.on('mousemove', (ev) => { this.updateSelectionBox(ev.latlng); });
+
+    L.tileLayer('https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', {
+      attribution: '&copy; <a href="http://www.thunderforest.com/">Thunderforest</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      apikey: '962b25ed041c480ca12771e771a48828',
+      maxZoom: 22
+    }).addTo(this.#mapRef);
+  }
+
+  drawRoute(route) {
+    let path = L.polyline(route.points);
+    let drawnRoute = {
+      path: path,
+      route: route,
+      appearence: null,
+      visible: true
+    };
+    this.#drawnRoutes.push(drawnRoute);
+
+    this.#updateDrawnRouteApperance(drawnRoute, "default");
+    path.addTo(this.#mapRef);
+
+    path.on('mouseover', event => {
+      this.#updateDrawnRouteApperance(drawnRoute, "hovered");
+      if (!this.#selectedRoutes.includes(route)) {
+        this.#routeInfo.update(route);
+      }
+    });
+
+    path.on('mouseout', event => {
+      if (this.#selectedRoutes.includes(route)) {
+        this.#updateDrawnRouteApperance(drawnRoute, "selected");
+      } else {
+        this.#updateDrawnRouteApperance(drawnRoute, "default");
+        this.#routeInfo.update(null);
+        this.#routeInfo.clear();
+      }
+    });
+
+    path.on('click', event => {
+      if (!this.#selectedRoutes.includes(route)) {
+        this.#selectedRoutes.add(route);
+      } else {
+        this.#selectedRoutes.remove(route);
+      }
+    });
+  }
+
+  removeRoute(route) {
+    let drawnRoute = this.#findDrawnRoute(route);
+    drawnRoute.path.remove();
+    this.#drawnRoutes = this.#drawnRoutes.filter(item => item !== drawnRoute);
+  }
+
+  zoomToRoutes(routes) {
+    if (routes == null || routes.length == 0) return;
+
+    let bounds = this.#findDrawnRoute(routes[0]).path.getBounds();
+    for (let i = 1; i < routes.length; i++) {
+      bounds.extend(this.#findDrawnRoute(routes[i]).path.getBounds());
+    }
+    this.#mapRef.flyToBounds(bounds);
+  }
+
+  #zoomToPoint(lat, lng) {
+    this.#mapRef.flyTo(L.latLng(lat, lng));
+  }
+
+  showCurrentPosition() {
+    let locationFound = position => {
+      let lat = position.coords.latitude;
+      let lng = position.coords.longitude;
+      this.#zoomToPoint(lat, lng);
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(locationFound);
+    }
+  }
+
+  #addTrails() {
+    this.#hikingTrails = L.tileLayer('https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://waymarkedtrails.org">waymarkedtrails.org</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+    }).addTo(this.#mapRef);
+  }
+
+  #removeTrails() {
+    if (this.#hikingTrails) {
+      this.#hikingTrails.remove();
+      this.#hikingTrails = null;
+    }
+  }
+
+  toggleTrails() {
+    if (this.#hikingTrails) {
+      this.#removeTrails();
+    } else {
+      this.#addTrails();
+    }
+  }
+
+  #findDrawnRoute(route) {
+    for (const drawnRoute of this.#drawnRoutes) {
+      if (drawnRoute.route == route) {
+        return drawnRoute;
+      }
+    }
+  }
+
+  updateRouteApperance(route, appearence) {
+    this.#updateDrawnRouteApperance(this.#findDrawnRoute(route), appearence);
+  }
+
+  #updateDrawnRouteApperance(drawnRoute, appearence) {
+    drawnRoute.appearence = appearence;
+
+    drawnRoute.path.setStyle(this.#routeStyles[appearence]);
+    if (appearence == "default") {
+      drawnRoute.path.bringToBack();
+    } else {
+      drawnRoute.path.bringToFront();
+    }
+  }
+
+  #changeRouteWidth(diff) {
+    this.#routeStyles["default"].weight += diff;
+    this.#routeStyles["selected"].weight += diff;
+    this.#routeStyles["hovered"].weight += diff;
+
+    for (let i = 0; i < this.#drawnRoutes.length; i++) {
+      this.#updateDrawnRouteApperance(this.#drawnRoutes[i], this.#drawnRoutes[i].appearence);
+    }
+  }
+
+  enlargeRoutes() {
+    if (this.#routesEnlarged) return;
+    this.#changeRouteWidth(2);
+    this.#routesEnlarged = true;
+  }
+
+  shrinkRoutes() {
+    if (!this.#routesEnlarged) return;
+    this.#changeRouteWidth(-2);
+    this.#routesEnlarged = false;
+  }
+
+  enableSelectionBox(enabled) {
+    this.#selectionBoxEnabled = enabled;
+    this.#setCursor(enabled ? "pointer" : "");
+  }
+
+  createSelectionBox(startLatLng) {
+    if (!this.#selectionBoxEnabled) return;
+
+    this.#selectionBoxStart = startLatLng;
+    let boxBounds = L.latLngBounds(this.#selectionBoxStart, this.#selectionBoxStart);
+    this.#selectionBox = L.rectangle(boxBounds, this.#selectionBoxStyle).addTo(this.#mapRef);
+  }
+
+  updateSelectionBox(newLatLng) {
+    if (!this.#selectionBox) return;
+
+    this.#selectionBoxEnd = newLatLng;
+    this.#selectionBox.setBounds(L.latLngBounds(this.#selectionBoxStart, this.#selectionBoxEnd));
+  }
+
+  removeSelectionBox(addRoutes) {
+    if (!this.#selectionBox) return;
+
+    if (addRoutes) {
+      this.#selectedRoutes.selectInBounds(this.#selectionBoxStart.lat, this.#selectionBoxStart.lng, 
+                                          this.#selectionBoxEnd.lat, this.#selectionBoxEnd.lng);
+    }
+
+    this.#selectionBox.remove();
+    this.#selectionBox = null;
+  }
+
+  toggleSelectionBox(latlng) {
+    if (this.#selectionBox) {
+      this.removeSelectionBox(true);
+    } else { 
+      this.createSelectionBox(latlng); 
+    }
+  }
+
+  getDiv() {
+    return this.#mapDiv;
+  }
+
+  #setCursor(cursorStyle) {
+    this.#mapDiv.style.cursor = cursorStyle;
+  }
+
+  unhideAllRoutes() {
+    if (!this.#routesHidden) return;
+    
+    this.#drawnRoutes.forEach(drawnRoute => { 
+      if (!drawnRoute.visible) {
+        drawnRoute.visible = true;
+        drawnRoute.path.addTo(this.#mapRef);
+      }
+    });
+
+    this.#selectedRoutes.get().forEach(route => this.#findDrawnRoute(route).path.bringToFront());
+
+    this.#routesHidden = false;
+  }
+
+  #hideOtherRoutes(visibleRoutes) {
+    if (this.#routesHidden) return;
+
+    let nonVisibleRoutes = this.#drawnRoutes.filter(drawnRoute => !visibleRoutes.includes(drawnRoute.route));
+    nonVisibleRoutes.forEach(drawnRoute => {
+      drawnRoute.visible = false;
+      drawnRoute.path.remove()
+    });
+
+    this.#routesHidden = true;
+  }
+
+  toggleHiddenSelectedRoutes() {
+    if (this.#routesHidden) {
+      this.unhideAllRoutes();
+    } else {
+      if (this.#selectedRoutes.length() > 0) {
+        this.#hideOtherRoutes(this.#selectedRoutes);
+      }
+    }
+  }
+}
+
+
+class Storage {
+  #dateSelectors;
+  #groups;
+  #routes;
+
+  #db = null;
+
+  constructor(routes, groups, dateSelectors) {
+    this.#routes = routes;
+    this.#groups = groups;
+    this.#dateSelectors = dateSelectors;
+  }
+
+  load() {
+    let openRequest = indexedDB.open("routeDB", 2);
+
+    openRequest.onupgradeneeded = event => {
+      this.#db = event.target.result; 
+      if (!this.#db.objectStoreNames.contains('routes')) {  
+        let objectStore = this.#db.createObjectStore('routes', { keyPath: 'id', autoIncrement: true});
+        objectStore.createIndex("hash", "hash", {unique: true});
+      }
+
+      if (!this.#db.objectStoreNames.contains('groups')) {  
+        let objectStore = this.#db.createObjectStore('groups', { keyPath: 'id', autoIncrement: true});
+      }
+    }
+
+    openRequest.onerror = () => { 
+      console.error("Unable to access database", openRequest.error); 
+    };
+      
+    openRequest.onsuccess = (event) => { 
+      this.#db = event.target.result; 
+      let readTransaction = this.#db.transaction("routes");
+      let objectStore = readTransaction.objectStore("routes");
+      objectStore.openCursor().onsuccess = (event) => {
+        let cursor = event.target.result;
+        if (cursor) {
+          let route = cursor.value;
+          route.selected = false;
+          route.visible = true;
+          this.#routes.addToDateOverview(route);
+          this.#routes.push(route);
+          cursor.continue();
+        }
+      }
+
+      readTransaction.oncomplete = event => {
+        if (this.#routes.count() > 0) {
+          this.#dateSelectors.update();
+        }
+
+        // Groups must be loaded after routes
+        this.#loadRoutes();
+      }
+    }
+  }
+
+  #loadRoutes() {
+    let readTransaction = this.#db.transaction("groups");
+    let objectStore = readTransaction.objectStore("groups");
+    objectStore.openCursor().onsuccess = (event) => {
+      let cursor = event.target.result;
+      if (cursor) {
+        let dbGroup = cursor.value;
+        this.#groups.push({
+          name: dbGroup.name,
+          routes: this.#routes.findRoutesByIDs(dbGroup.routeIds),
+          id: dbGroup.id
+        })
+
+        cursor.continue();
+      }
+    }
+  }
+
+  async addGroup(group, callback) {
+    let dbGroup = {
+      name: group.name,
+      routeIds: group.routes.map(route => route.id)
+    }
+
+    let transaction = this.#db.transaction(["groups"], "readwrite");
+
+    transaction.onerror = function(event)  { 
+      console.error("Unable to access database", event); 
+    };
+
+    let objectStore = transaction.objectStore("groups");
+    let request = objectStore.add(dbGroup);
+    request.onsuccess = async function(event) {
+      group.id = event.target.result;
+      callback();
+    };
+  }
+
+  async updateGroup(group) {
+    let dbGroup = {
+      name: group.name,
+      routeIds: group.routes.map(route => route.id),
+      id: group.id
+    }
+
+    let transaction = this.#db.transaction(["groups"], "readwrite");
+
+    transaction.onerror = function(event)  { 
+      console.error("Unable to access database", event); 
+    };
+
+    let objectStore = transaction.objectStore("groups");
+    let request = objectStore.put(dbGroup);
+    request.onsuccess = async function(event) {
+      
+    };
+  }
+
+  async removeGroup(group) {
+    let transaction = this.#db.transaction(["groups"], "readwrite");
+
+    transaction.onerror = function(event)  { 
+      console.error("Unable to access database", event); 
+    };
+
+    let objectStore = transaction.objectStore("groups");
+    let request = objectStore.delete(group.id);
+    request.onsuccess = function(event) {
+
+    }
+  }
+
+  async removeRoute(route) {
+    let transaction = this.#db.transaction(["routes"], "readwrite");
+
+    transaction.onerror = function(event)  { 
+      console.error("Unable to access database", event); 
+    };
+
+    let objectStore = transaction.objectStore("routes");
+    let request = objectStore.delete(route.id);
+    request.onsuccess = function(event) {
+
+    }
+  }
+
+  lookupRoute(route, callback) {
+    let transaction = this.#db.transaction(["routes"], "readwrite");
+    let objectStore = transaction.objectStore("routes");
+    let hashIndex = objectStore.index('hash');
+
+    return new Promise((resolve, reject) => {
+      let getter = hashIndex.get(route.hash);
+
+      getter.onsuccess = function(event) {
+        callback(getter, resolve);
+      }
+
+      getter.onerror = function(event) {
+        console.log("Unable to access database", event);
+        reject();
+      }
+    });
+  }
+
+  #getRouteId(route) {
+    return this.lookupRoute(route, function(getter, resolve) {
+      resolve(getter.result.id);
+    });
+  }
+
+  async addRoute(route) {
+    let dbRoute = {
+      name: route.name,
+      length: route.length,
+      points: route.points,
+      startTime: route.startTime,
+      endTime: route.endTime,
+      hash: route.hash
+    }
+
+    let transaction = this.#db.transaction(["routes"], "readwrite");
+
+    transaction.onerror = function(event)  { 
+      console.error("Unable to access database", event); 
+    };
+
+    let objectStore = transaction.objectStore("routes");
+    let request = objectStore.add(dbRoute);
+    request.onsuccess = async event => {
+      route.id = await this.#getRouteId(route);
+    };
+  }
+}
+
+
+/******** Utils ***********/
 function addToSetArray(array, item) {
   if (array.indexOf(item) === -1) {
     array.push(item);
   }
 }
 
-function addToDateOverview(route) {
-  if (!route.startTime) return;
-
-  addToSetArray(allYears, route.startTime.getFullYear());
-  addToSetArray(allMonths, route.startTime.getMonth());
-  addToSetArray(allWeeks, route.startTime.getWeek());
-}
-
-function rebuildDateOverview() {
-  allYears = [];
-  allMonths = [];
-  allWeeks = [];
-
-  for (var i = 0; i < routes.length; i++) {
-    addToDateOverview(routes[i]);
-  }
-}
-
-
-/******** User input ***********/
-function mapKeyPress(event) {
-  var key = event.keyCode || event.charCode;
-  var keyHandled = true;
-
-  if (helpShown) {
-    if (key == 27) { // esc key
-      hideHelp();
-    }
-  } else if (groupSelectShown) {
-    if (key == 27) { // esc key
-      hideGroupSelector();
-    } else if (event.target != newGroupName) {
-      if (key == 71 || key == 65 || key == 82) { // 'g', 'a', or 'r' key
-        hideGroupSelector();
-      }
-    } else {
-      keyHandled = false;
-    }
-  } else {
-    if (key == 46) { // delete key
-      deleteSelectedRoutes();
-    } else if (key == 84) { // 't' key
-      toggleTrails();
-    } else if (key == 27) { // esc key
-      clearSelectedRoutes();
-    } else if (key == 72) { // 'h' key
-      toggleHiddenSelectedRoutes();
-    } else if (key == 68) { // 'd' key
-      toggleDateSelectors();
-    } else if (key == 65) { // 'a' key
-      selectGroupToExtend();
-    } else if (key == 82) { // 'r' key
-      selectGroupToRemove();
-    } else if (key == 71) { // 'g' key
-      selectGroupToFocus();
-    } else if (key == 73) { // 'i' key
-      toggleExtendedRouteInfo();
-    } else if (key == 18) { // alt key
-      enlargeRoutes();
-    } else {
-      keyHandled = false;
-    }  
-  }
-
-  if (key == 17) { // ctrl key
-    ctrlDown = true;
-    mapDiv.style.cursor = "pointer";
-  } else if (key == 191) { // '?' key
-    toggleHelp();
-  }
-
-  if (keyHandled) {
-    ignoreDefaults(event);
-  }
-}
-
-function mapKeyRelease(event) {
-  var key = event.keyCode || event.charCode;
-  if (key == 17) { // ctrl key
-    ctrlDown = false;
-    mapDiv.style.cursor = "";
-    removeSelectionBox(false);
-  } else if (key == 18) { // alt key
-    shrinkRoutes();
-  }
-}
-
-function newGroupKeyUp(event) {
-  var key = event.keyCode || event.charCode;
-  if (key == 13) {
-    if (newGroupName.value.length > 0) {
-      createGroup(newGroupName.value, function() {
-        updateGroupSelector(groupSelectorCallback);
-      });
-    }
-  }
-}
-
-/******** UI code ***********/
-var dateSelectors, yearSelector, monthSelector, weekSelector;
-var helpBtn, helpDialog, closeHelpBtn, groupDialog, closeGroupBtn, groupList;
-var newGroupName, groupSelectorTitle, newGroupContainer, errorMsgDiv;
-var currentHighlightedRoute = null;
-var helpShown = false, groupSelectShown = false;
-
-function hideHelp() {
-  helpDialog.close();
-  helpShown = false;
-}
-
-function showHelp() {
-  helpDialog.showModal();
-  helpShown = true;
-}
-
-function toggleHelp() {
-  if (helpShown) {
-    hideHelp();
-  } else {
-    showHelp();
-  }
-}
-
-var groupSelectorCallback = null;
-var groupSelectorGroups = null;
-var groupSelectorDelete = false;
-
-function groupSelectorClick(id) {
-  hideGroupSelector();
-  if (groupSelectorCallback) {
-    groupSelectorCallback(id);
-  }
-}
-
-function groupDeletorClick(id) {
-  hideGroupSelector();
-  deleteGroup(id);
-}
-
-function updateGroupSelector() {
-  var groupListItems = "";
-  for (var i = 0; i < groupSelectorGroups.length; i++) {
-    var group = groupSelectorGroups[i];
-    groupListItems += '<div class="groupListItem mdl-list__item"> \
-        <span class="mdl-list__item-primary-content" onclick="groupSelectorClick(' + group.id + ')"> \
-          <span>' + group.name + '</span> \
-        </span>';
-    if (groupSelectorDelete) {
-      groupListItems += '<a class="mdl-list__item-secondary-action" onclick="groupDeletorClick(' + group.id + ')"><i class="material-icons">delete</i></a>';
-    }
-    groupListItems += '</div>';
-  }
-
-  newGroupName.value = "";
-  newGroupName.parentElement.MaterialTextfield.change();
-  closeGroupBtn.focus();
-
-  groupList.innerHTML = groupListItems;
-}
-
-function showGroupSelector(callback, title, groups, newGroupInput, removeOption) {
-  groupSelectorCallback = callback;
-  groupSelectorGroups = groups;
-  groupSelectorDelete = removeOption;
-
-  updateGroupSelector();
-
-  groupSelectorTitle.innerText = title;
-  newGroupContainer.style.display = (newGroupInput ? "inline-block" : "none");
-
-  groupDialog.showModal();
-  closeGroupBtn.focus();
-  groupSelectShown = true;
-}
-
-function hideGroupSelector() {
-  groupDialog.close();
-  groupSelectShown = false;
-}
-
 function addOptionToSelect(select, text, value) {
-  var option = document.createElement("option");
+  let option = document.createElement("option");
   option.text = text;
   option.value = value;
   select.add(option);
 }
 
 function removeOptionsFromSelect(select) {
-  for (var i = select.options.length - 1; i >= 0; i--) {
+  for (let i = select.options.length - 1; i >= 0; i--) {
     select.remove(i);
   }
 }
 
 function selectHasOption(select, option) {
-  for (var i = select.options.length - 1; i >= 0; i--) {
+  for (let i = select.options.length - 1; i >= 0; i--) {
     if (select.options[i].value == option) {
       return true;
     }
@@ -375,1079 +1650,22 @@ function addArrayToSelect(array, select, textGenerator) {
   });
 
   addOptionToSelect(select, "---", null);
-  for (var i = 0; i < array.length; i++) {
+  for (let i = 0; i < array.length; i++) {
     addOptionToSelect(select, textGenerator(array[i]), array[i]);
   }
 }
 
-function clearDateSelectors() {
-  yearSelector.value = "null";
-  monthSelector.value = "null";
-  weekSelector.value = "null";
-}
-
-function getDateSelectorValues() {
-  return {
-    year: yearSelector.value == "null" || yearSelector.value == "" ? null : parseInt(yearSelector.value),
-    month: monthSelector.value == "null" || monthSelector.value == "" ? null : parseInt(monthSelector.value),
-    week: weekSelector.value == "null" || weekSelector.value == "" ? null : parseInt(weekSelector.value)
-  }
-}
-
-function updateDateSelectors(clearMonth, clearWeek) {
-  var selectedDate = getDateSelectorValues();
-  var dateOptions = getDateOptionsByYMW(selectedDate.year, selectedDate.month, selectedDate.week)
-
-  removeOptionsFromSelect(yearSelector);
-  removeOptionsFromSelect(monthSelector);
-  removeOptionsFromSelect(weekSelector);
-
-
-  var monthNames = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-  ];
-
-  addArrayToSelect(dateOptions.years, yearSelector, function(year) { return year; });
-  addArrayToSelect(dateOptions.months, monthSelector, function(month) { return monthNames[month]; });
-  addArrayToSelect(dateOptions.weeks, weekSelector, function(week) { return week; });
-
-  setSelectOptionIfPossible(yearSelector, selectedDate.year);
-  setSelectOptionIfPossible(monthSelector, selectedDate.month);
-  setSelectOptionIfPossible(weekSelector, selectedDate.week);
-}
-
-function dateSelectorsChanged(clearMonth, clearWeek) {
-  if (clearMonth) monthSelector.value = "null";
-  if (clearWeek) weekSelector.value = "null";
-
-  var selectedDate = getDateSelectorValues();
-  selectRoutesByYMW(selectedDate.year, selectedDate.month, selectedDate.week);
-  updateDateSelectors();
-}
-
-function toggleDateSelectors() {
-  dateSelectors.hidden = !dateSelectors.hidden;
-}
-
-function initUI() {
-  helpBtn = document.querySelector("#helpBtn");
-  helpDialog = document.querySelector("#helpDialog");
-  groupDialog = document.querySelector("#groupDialog");
-  groupList = document.querySelector(".groupList");
-  closeHelpBtn = document.querySelector("#closeHelpBtn");
-  closeGroupBtn = document.querySelector("#closeGroupBtn");
-  newGroupName = document.querySelector("#newGroupName");
-  newGroupContainer = document.querySelector("#newGroupContainer");
-  groupSelectorTitle = document.querySelector("#groupSelectorTitle");
-  errorMsgDiv = document.querySelector("#errorMsgDiv");
-  dateSelectors = document.querySelector("#dateSelectors");
-  yearSelector = document.querySelector("#yearSelector");
-  monthSelector = document.querySelector("#monthSelector");
-  weekSelector = document.querySelector("#weekSelector");
-
-  helpBtn.addEventListener('click', showHelp);
-  closeHelpBtn.addEventListener('click', hideHelp);
-  closeGroupBtn.addEventListener('click', hideGroupSelector);
-
-  yearSelector.addEventListener('change', function() { dateSelectorsChanged(true, true) });
-  monthSelector.addEventListener('change', function() { dateSelectorsChanged(false, true) });
-  weekSelector.addEventListener('change', function() { dateSelectorsChanged(false, false) });
-
-  newGroupName.addEventListener('keyup', newGroupKeyUp);
-
-  window.onblur = shrinkRoutes;
-}
-
-function round(number) {
-  return Math.round(number * 100) / 100;
-}
-
-function getRoutesDuration(routes) {
-  return routes.reduce(function (val, curRoute) {
-    if (curRoute.startTime == null) {
-      return val;
-    } else {
-      return val + (curRoute.endTime - curRoute.startTime);
-    }
-  }, 0);
-}
-
-function timeMsToStr(timeMs) {
-  var msPerSecond = 1000;
-  var msPerMinute = msPerSecond * 60;
-  var msPerHour = msPerMinute * 60;
-  var msPerDay = msPerHour * 24;
-
-  var days = Math.floor(timeMs / msPerDay);
-  timeMs -= days * msPerDay;
-
-  var hours = Math.floor(timeMs / msPerHour);
-  timeMs -= hours * msPerHour;
-
-  var minutes = Math.floor(timeMs / msPerMinute);
-  timeMs -= minutes * msPerMinute;
-
-  return (days > 0 ? "<b>" + days + "</b> day" + (days != 1 ? "s " : " ") : "") +
-    (days > 0 || hours > 0 ? "<b>" + hours + "</b> hour" + (hours != 1 ? "s " : " ") : "") +
-    "<b>" + minutes + "</b> minute" + (minutes > 1 ? "s" : "");
-}
-
-function toggleExtendedRouteInfo() {
-  if (extendedInfo) {
-    routeInfoDiv.style.height = "20px";
-  } else {
-    routeInfoDiv.style.height = "40px";
-  }
-
-  extendedInfo = !extendedInfo;
-  updateRouteInfo(currentHighlightedRoute);
-}
-
-function updateRouteInfo(route) {
-  currentHighlightedRoute = null;
-
-  if (route != null) {
-    currentHighlightedRoute = route;
-    var time = timeMsToStr(getRoutesDuration([route]));
-    routeInfoDiv.innerHTML = route.name + " - <b>" + round(route.length) + "</b> km" + 
-      (extendedInfo ? "<br/>" + route.startTime.toLocaleDateString("en-UK") + " - " + time : "");
-  } else if (selectedRoutes.length == 1) {
-    var time = timeMsToStr(getRoutesDuration(selectedRoutes));
-    routeInfoDiv.innerHTML = selectedRoutes[0].name + " - <b>" + round(selectedRoutes[0].length) + "</b> km" + 
-      (extendedInfo ? "<br/>" + selectedRoutes[0].startTime.toLocaleDateString("en-UK") + " - " + time : "");
-  } else {
-    if (selectedRoutesLength > 0) {
-      var time = timeMsToStr(getRoutesDuration(selectedRoutes));
-      routeInfoDiv.innerHTML = "<b>" + round(selectedRoutesLength) + "</b> km" + (extendedInfo ? "<br/>" + time : "");
-    } else {
-      clearRouteInfo();
-      return;
-    }
-  }
-  routeInfoDiv.style.display = "table-cell";
-}
-
-function clearRouteInfo() {
-  if (selectedRoutes.length == 0) {
-    routeInfoDiv.innerHTML = "";
-    routeInfoDiv.style.display = "none";
-  }
-}
-
-function showErrorMsg(text) {
-  var container = document.querySelector("#snackbarDiv");
-  container.MaterialSnackbar.showSnackbar({
-    message: text,
-    timeout: 3000
-  });
-}
-
-function showUndoRouteDelete(plural, undoHandler) {
-  showUndoDelete(plural ? "Routes were deleted" : "Route was deleted", undoHandler);
-}
-
-function showUndoGroupDelete(undoHandler) {
-  showUndoDelete("Group was deleted", undoHandler);
-}
-
-function showUndoDelete(message, undoHandler) {
-  var container = document.querySelector("#snackbarDiv");
-  container.MaterialSnackbar.showSnackbar({
-    message: message,
-    timeout: 5000,
-    actionText: "Undo",
-    actionHandler: async function(event) {
-      undoHandler(event);
-      container.MaterialSnackbar.cleanup_();
-    }
-  });
-}
-
-/******** Control code ***********/
-function clearSelectedRoutes(clearDate = true) {
-  selectedRoutes.forEach(function (route) {
-    route.selected = false;
-    updatePathApperance(route, "default");
-  });
-  selectedRoutesLength = 0;
-  selectedRoutes = [];
-  clearRouteInfo();
-  unhideAllRoutes();
-  if (clearDate) {
-    clearDateSelectors();
-  }
-}
-
-function setSelectedRoutes(routes) {
-  clearSelectedRoutes(false);
-  selectedRoutes = routes;
-  updateSelectedRoutesLength();
-  for (var i = 0; i < routes.length; i++) {
-    routes[i].selected = true;
-    updatePathApperance(routes[i], "selected");
-  }
-  updateRouteInfo(null);
-}
-
-function addToSelectedRoutes(route) {
-  if (selectedRoutes.includes(route)) return;
-
-  selectedRoutes.push(route);
-  route.selected = true;
-  updatePathApperance(route, "selected");
-  updateSelectedRoutesLength();
-  updateRouteInfo(null);
-}
-
-function removeFromSelectedRoutes(route) {
-  if (!selectedRoutes.includes(route)) return;
-
-  selectedRoutes = selectedRoutes.filter(item => item !== route);
-  route.selected = false;
-  updatePathApperance(route, "hovered");
-  updateSelectedRoutesLength();
-  updateRouteInfo(route);
-}
-
-function selectRoutesByDateRange(fromDate, toDate) {
-  var routesInDateRange = [];
-
-  for (var i = 0; i < routes.length; i++) {
-    var route = routes[i];
-    if ((fromDate == null || fromDate <= route.startTime) &&
-        (toDate == null || toDate >= route.endTime)) {
-      routesInDateRange.push(route);
-    }
-  }
-
-  setSelectedRoutes(routesInDateRange);
-}
-
-function selectRoutesByYMW(year, month, week) {
-  if (year == null && month == null && week == null) {
-    clearSelectedRoutes();
-    return;
-  }
-
-  var routesInDateRange = [];
-
-  for (var i = 0; i < routes.length; i++) {
-    var route = routes[i];
-
-    if ((route.startTime != null) && 
-        (year == null || year == route.startTime.getFullYear()) &&
-        (month == null || month == route.startTime.getMonth()) &&
-        (week == null || week == route.startTime.getWeek())) {
-      routesInDateRange.push(route);
-    }
-  }
-
-  setSelectedRoutes(routesInDateRange);
-  zoomToRoutes(routesInDateRange);
-}
-
-function getDateOptionsByYMW(year, month, week) {
-  var filteredYears = [];
-  var filteredMonths = [];
-  var filteredWeeks = [];
-
-  for (var i = 0; i < routes.length; i++) {
-    var route = routes[i];
-
-    if ((route.startTime != null)) {
-      addToSetArray(filteredYears, route.startTime.getFullYear());
-
-      if (year == null || year == route.startTime.getFullYear()) {
-        addToSetArray(filteredMonths, route.startTime.getMonth());
-      }
-
-      if ((year == null || year == route.startTime.getFullYear()) &&
-          (month == null || month == route.startTime.getMonth())) {
-        addToSetArray(filteredWeeks, route.startTime.getWeek());
-      }
-    }
-  }
-
-  return {
-    years: filteredYears,
-    months: filteredMonths,
-    weeks: filteredWeeks
-  }
-}
-
-function unhideAllRoutes() {
-  if (!routesHidden) return;
-  
-  routes.forEach(function(route) { 
-    if (!route.visible) {
-      route.visible = true;
-      route.path.addTo(map);
-    }
-  });
-
-  selectedRoutes.forEach(function(route) {
-    route.path.bringToFront();
-  });
-
-  routesHidden = false;
-}
-
-function hideOtherRoutes(visibleRoutes) {
-  if (routesHidden) return;
-
-  var nonSelectedRoutes = routes.filter(route => !visibleRoutes.includes(route));
-  nonSelectedRoutes.forEach(function(route) {
-    route.visible = false;
-    route.path.remove()
-  });
-
-  routesHidden = true;
-}
-
-function toggleHiddenSelectedRoutes() {
-  if (routesHidden) {
-    unhideAllRoutes();
-  } else {
-    if (selectedRoutes.length > 0) {
-      hideOtherRoutes(selectedRoutes);
-    }
-  }
-}
-
-function selectRoutesInBounds(startLat, startLng, endLat, endLng) {
-  var minLat = Math.min(startLat, endLat);
-  var maxLat = Math.max(startLat, endLat);
-  var minLng = Math.min(startLng, endLng);
-  var maxLng = Math.max(startLng, endLng);
-
-  for (var i = 0; i < routes.length; i++) {
-    var curRoute = routes[i];
-
-    if (!curRoute.visible) {
-      continue;
-    }
-
-    for (var j = 0; j < curRoute.points.length; j++) {
-      var curPoint = curRoute.points[j];
-
-      if (minLat < curPoint.lat && curPoint.lat < maxLat &&
-          minLng < curPoint.lng && curPoint.lng < maxLng) {
-        addToSelectedRoutes(curRoute);
-        break;
-      }
-    }
-  }
-}
-
-function updateSelectedRoutesLength() {
-  selectedRoutesLength = selectedRoutes.reduce(function (prev, cur) {
-    return prev + cur.length;
-  }, 0);
-}
-
-function selectGroupToFocus() {
-  showGroupSelector(focusGroup, "Select Group", groups, true, true);
-}
-
-function selectGroupToExtend() {
-  if (selectedRoutes.length > 0) {
-    if (groups.length > 0) {
-      showGroupSelector(addSelectedRoutesToGroup, "Add to Group", groups, false, false);
-    } else {
-      showErrorMsg("Create a group first by pressing 'g'");
-    }
-  } else {
-    showErrorMsg("Select routes to add them to a group");
-  }
-}
-
-function selectGroupToRemove() {
-  if (selectedRoutes.length > 0) {
-    var selectedRoutesGroups = findRoutesGroups(selectedRoutes);
-    if (selectedRoutesGroups.length > 0) {
-      showGroupSelector(removeSelectedRoutesFromGroup, "Remove from Group", selectedRoutesGroups, false, false);
-    } else {
-      showErrorMsg("The selected routes does not belong to any groups");
-    }
-  }
-}
-
-function parseDroppedFile(file) {
-  var reader = new FileReader();
-  return new Promise((resolve, reject) => {
-    reader.onload = async function(e) { 
-      var routes = await addGpxFile(e.target.result);
-      resolve(routes);
-    }
-    reader.readAsText(file);
-  });
-}
-
-function parseDroppedFiles(e) {
-  e.stopPropagation();
-  e.preventDefault();
-
-  var files = e.target.files || e.dataTransfer.files;
-
-  // process all File objects
-  var promises = [];
-  for (var i = 0; i < files.length; i++) {
-    promises.push(parseDroppedFile(files[i]));
-  }
-
-  Promise.all(promises).then((routeFiles) => {
-    var newRoutes = [];
-    for (var i = 0; i < routeFiles.length; i++) {
-      for (var j = 0; j < routeFiles[i].length; j++) {
-        newRoutes = newRoutes.concat(routeFiles[i][j]);
-      }
-    }
-
-    if (newRoutes.length != 0) {
-      setSelectedRoutes(newRoutes);
-      zoomToRoutes(newRoutes);
-    }
-  });
-}
-
-function ignoreDefaults(e) {
-  e.stopPropagation();
-  e.preventDefault();
-}
-
-async function addGpxFile(gpxRoute) {
-  var fileRoutes = await parseRoutes(gpxRoute);
-  return await addRoutes(fileRoutes);
-}
-
-async function addRoutes(addedRoutes) {
-  var newRoutes = [];
-
-  for (var i = 0; i < addedRoutes.length; i++) {
-    var route = addedRoutes[i];
-    if (await routeExists(route)) {
-      console.log("Route already exists: " + route.name);
-    } else {
-      newRoutes.push(route);
-      drawRoute(route);
-      addToDateOverview(route);
-      addRouteToDb(route);
-    }
-  }
-
-  routes = routes.concat(newRoutes);
-
-  updateDateSelectors();
-
-  return newRoutes;
-}
-
-function deleteSelectedRoutes() {
-  var deletedRoutes = [];
-
-  for (var i = 0; i < selectedRoutes.length; i++) {
-    var route = selectedRoutes[i];
-    routes = routes.filter(item => item !== route);
-    removeRouteFromDb(route);
-    removeRouteFromMap(route);
-
-    deletedRoutes.push(route);
-  }
-
-  selectedRoutes = [];
-  clearRouteInfo();
-  rebuildDateOverview();
-  updateDateSelectors();
-
-  showUndoRouteDelete(deletedRoutes.length > 1, async function(event) {
-    addRoutes(deletedRoutes);
-    deletedRoutes = [];
-  });
-}
-
-function showCurrentPosition() {
-  var locationFound = function(position) {
-    var lat = position.coords.latitude;
-    var lng = position.coords.longitude;
-    zoomToPoint(lat, lng);
-  }
-
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(locationFound);
-  }
-}
-
-function findRoutesByIDs(routeIds) {
-  var routeIdHash = {};
-  for (var i = 0; i < routes.length; i++) {
-    var route = routes[i];
-    routeIdHash[route.id] = route;
-  }
-
-  var foundRoutes = [];
-  for (var i = 0; i < routeIds.length; i++) {
-    var routeId = routeIds[i];
-    if (routeIdHash.hasOwnProperty(routeId)) {
-      foundRoutes.push(routeIdHash[routeId]);
-    } else {
-      console.log("Unknown route ID: " + routeId);
-    }
-  }
-
-  return foundRoutes;
-}
-
-/******** Group functions ***********/
-function createGroup(name, callback) {
-  var group = {
-    name: name,
-    routes: []
-  };
-
-  groups.push(group);
-  addGroupToDb(group, callback);
-}
-
-function deleteGroup(id) {
-  var group = findGroup(id);
-  groups = groups.filter(item => item !== group);
-  removeGroupFromDb(group);
-
-  showUndoGroupDelete(async function(event) {
-    groups.push(group);
-    addGroupToDb(group, function() {});
-  });
-}
-
-function findGroup(id) {
-  for (var i = 0; i < groups.length; i++) {
-    var group = groups[i];
-    if (group.id == id) {
-      return group;
-    }
-  }
-  throw "Unknown group ID " + id;
-}
-
-function addRoutesToGroup(id, routes) {
-  var group = findGroup(id);
-
-  for (var i = 0; i < routes.length; i++) {
-    addToSetArray(group.routes, routes[i]);
-  }
-
-  updateGroupInDb(group);
-}
-
-function addSelectedRoutesToGroup(id) {
-  addRoutesToGroup(id, selectedRoutes);
-  focusGroup(id);
-}
-
-function removeRoutesFromGroup(id, routes) {
-  var group = findGroup(id);
-
-  for (var i = 0; i < routes.length; i++) {
-    var route = routes[i];
-    group.routes = group.routes.filter(item => item !== route);
-  }
-
-  updateGroupInDb(group);
-}
-
-function removeSelectedRoutesFromGroup(id) {
-  removeRoutesFromGroup(id, selectedRoutes);
-  focusGroup(id);
-}
-
-function focusGroup(id) {
-  var group = findGroup(id);
-  setSelectedRoutes(group.routes);
-}
-
-function findRouteGroups(route) {
-  var foundGroups = [];
-
-  for (var i = 0; i < groups.length; i++) {
-    var group = groups[i];
-    if (group.routes.includes(route)) {
-      foundGroups.push(group);
-    }
-  }
-
-  return foundGroups;
-}
-
-function findRoutesGroups(routes) {
-  var foundGroups = [];
-
-  for (var i = 0; i < routes.length; i++) {
-    var route = routes[i];
-    var routeGroups = findRouteGroups(route);
-    for (var j = 0; j < routeGroups.length; j++) {
-      addToSetArray(foundGroups, routeGroups[j]);
-    }
-  }
-
-  return foundGroups;
-}
-
-/******** Map functions ***********/
-var map;
-var hikingTrails;
-var routesEnlarged = false;
-
-var routeStyles = {
-  "default": {
-    color: "#0000CC",
-    weight: 2,
-    opacity: 0.9,
-    smothFactor: 1
-  },
-  "selected": {
-    color: "#FFD90F",
-    weight: 3,
-    opacity: 0.9,
-    smothFactor: 1
-  },
-  "hovered": {
-    color: "#CC0000",
-    weight: 3,
-    opacity: 0.9,
-    smothFactor: 1
-  },
-}
-
-var selectionBox = null;
-var selectionBoxStart;
-var selectionBoxEnd;
-
-var selectionBoxStyle = {
-  color: "#6e8f5e",
-  opacity: 0.4,
-  weight: 2,
-  fill: true,
-  fillColor: "#6e8f5e",
-  fillOpacity: 0.3 
-}
-
-function drawRoute(route) {
-  var path = L.polyline(route.points);
-
-  path.route = route;
-  route.path = path;
-  updatePathApperance(route, "default");
-  path.addTo(map);
-
-  path.on('mouseover', function(event) {
-    updatePathApperance(route, "hovered");
-    if (!selectedRoutes.includes(path.route)) {
-      updateRouteInfo(path.route);
-    }
-  });
-
-  path.on('mouseout', function(event) {
-    if (selectedRoutes.includes(path.route)) {
-      updatePathApperance(route, "selected");
-    } else {
-      updatePathApperance(route, "default");
-      updateRouteInfo(null);
-      clearRouteInfo();
-    }
-  });
-
-  path.on('click', function(event) {
-    if (!selectedRoutes.includes(path.route)) {
-      addToSelectedRoutes(path.route);
-    } else {
-      removeFromSelectedRoutes(path.route);
-    }
-  });
-}
-
-function removeRouteFromMap(route) {
-  route.path.remove();
-}
-
-function mapCenterRoutes(routes) {
-  map.panTo(routesCenter(routes));
-}
-
-function zoomToRoutes(routes) {
-  if (routes == null || routes.length == 0) return;
-
-  var bounds = routes[0].path.getBounds();
-  for (var i = 1; i < routes.length; i++) {
-    bounds.extend(routes[i].path.getBounds());
-  }
-  map.flyToBounds(bounds);
-}
-
-function zoomToPoint(lat, lng) {
-  map.flyTo(L.latLng(lat, lng));
-}
-
-function initMap() {
-  routes = [];
-
-  mapDiv = document.getElementById("mapDiv");
-  routeInfoDiv = document.getElementById("routeInfo");
-
-  mapDiv.addEventListener("dragover", ignoreDefaults);
-  mapDiv.addEventListener("dragenter", ignoreDefaults);
-  mapDiv.addEventListener("dragleave", ignoreDefaults);
-  mapDiv.addEventListener("drop", parseDroppedFiles);
-  mapDiv.addEventListener("keydown", mapKeyPress);
-  mapDiv.addEventListener("keyup", mapKeyRelease);
-
-  document.body.addEventListener("keydown", mapKeyPress);
-  document.body.addEventListener("keyup", mapKeyRelease);
-
-  map = L.map('mapDiv').setView({
-    lat: 55.50841618187183,
-    lng: 11.593322753906252
-  }, 9);
-
-  map.on('click', function(ev) { 
-    if (selectionBox) {
-      removeSelectionBox(true);
-    } else { 
-      createSelectionBox(ev.latlng); 
-    }
-  });
-  map.on('mousemove', function(ev) { updateSelectionBox(ev.latlng); });
-
-  var outdoorsTiles = L.tileLayer('https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', {
-    attribution: '&copy; <a href="http://www.thunderforest.com/">Thunderforest</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    apikey: '962b25ed041c480ca12771e771a48828',
-    maxZoom: 22
-  }).addTo(map);
-
-  routeInfoDiv.addEventListener("click", clearSelectedRoutes);
-
-  initDb();
-  initUI();
-  showCurrentPosition();
-}
-
-function addTrails() {
-  hikingTrails = L.tileLayer('https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://waymarkedtrails.org">waymarkedtrails.org</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
-  }).addTo(map);
-}
-
-function removeTrails() {
-  if (hikingTrails) {
-    hikingTrails.remove();
-    hikingTrails = null;
-  }
-}
-
-function toggleTrails() {
-  if (hikingTrails) {
-    removeTrails();
-  } else {
-    addTrails();
-  }
-}
-
-function updatePathApperance(route, appearence) {
-  route.appearence = appearence;
-
-  route.path.setStyle(routeStyles[appearence]);
-  if (appearence == "default") {
-    route.path.bringToBack();
-  } else {
-    route.path.bringToFront();
-  }
-}
-
-function enlargeRoutes() {
-  if (routesEnlarged) return;
-  changeRouteWidth(2);
-  routesEnlarged = true;
-}
-
-function shrinkRoutes() {
-  if (!routesEnlarged) return;
-  changeRouteWidth(-2);
-  routesEnlarged = false;
-}
-
-function changeRouteWidth(diff) {
-  routeStyles["default"].weight += diff;
-  routeStyles["selected"].weight += diff;
-  routeStyles["hovered"].weight += diff;
-
-  for (var i = 0; i < routes.length; i++) {
-    updatePathApperance(routes[i], routes[i].appearence);
-  }
-}
-
-function createSelectionBox(startLatLng) {
-  if (!ctrlDown) return;
-
-  selectionBoxStart = startLatLng;
-  var boxBounds = L.latLngBounds(selectionBoxStart, selectionBoxStart);
-  selectionBox = L.rectangle(boxBounds, selectionBoxStyle).addTo(map);
-}
-
-function updateSelectionBox(newLatLng) {
-  if (!selectionBox) return;
-
-  selectionBoxEnd = newLatLng;
-  selectionBox.setBounds(L.latLngBounds(selectionBoxStart, selectionBoxEnd));
-}
-
-function removeSelectionBox(addRoutes) {
-  if (!selectionBox) return;
-
-  if (addRoutes) {
-    selectRoutesInBounds(selectionBoxStart.lat, selectionBoxStart.lng, 
-                         selectionBoxEnd.lat, selectionBoxEnd.lng);
-  }
-
-  selectionBox.remove();
-  selectionBox = null;
-}
-
-
-/******** Route and group storage ***********/
-var db;
-
-function initDb() {
-  var openRequest = indexedDB.open("routeDB", 2);
-
-  openRequest.onupgradeneeded = function(event) {
-    db = event.target.result; 
-    if (!db.objectStoreNames.contains('routes')) {  
-      var objectStore = db.createObjectStore('routes', { keyPath: 'id', autoIncrement: true});
-      objectStore.createIndex("hash", "hash", {unique: true});
-    }
-
-    if (!db.objectStoreNames.contains('groups')) {  
-      var objectStore = db.createObjectStore('groups', { keyPath: 'id', autoIncrement: true});
-    }
-  }
-
-  openRequest.onerror = function()  { 
-    console.error("Unable to access database", openRequest.error); 
-  };
-    
-  openRequest.onsuccess = function(event) { 
-    db = event.target.result; 
-    let readTransaction = db.transaction("routes");
-    let objectStore = readTransaction.objectStore("routes");
-    objectStore.openCursor().onsuccess = function(event) {
-      var cursor = event.target.result;
-      if (cursor) {
-        var route = cursor.value;
-        route.selected = false;
-        route.visible = true;
-        drawRoute(route);
-        addToDateOverview(route);
-        routes.push(route);
-        cursor.continue();
-      }
-    }
-
-    readTransaction.oncomplete = function(event) {
-      if (routes.length > 0) {
-        updateDateSelectors();
-      }
-
-      // Groups must be loaded after routes
-      loadRoutes();
-    }
-  };
-}
-
-function loadRoutes() {
-  let readTransaction = db.transaction("groups");
-  let objectStore = readTransaction.objectStore("groups");
-  objectStore.openCursor().onsuccess = function(event) {
-    var cursor = event.target.result;
-    if (cursor) {
-      var dbGroup = cursor.value;
-      groups.push({
-        name: dbGroup.name,
-        routes: findRoutesByIDs(dbGroup.routeIds),
-        id: dbGroup.id
-      })
-
-      cursor.continue();
-    }
-  }
-}
-
-function lookupGroup(group, callback) {
-  var transaction = db.transaction(["groups"], "readwrite");
-  var objectStore = transaction.objectStore("groups");
-
-  return new Promise((resolve, reject) => {
-    var getter = objectStore.get(group.id);
-
-    getter.onsuccess = function(event) {
-      callback(getter, resolve);
-    }
-
-    getter.onerror = function(event) {
-      console.log("Unable to access database", event);
-      reject();
-    }
-  });
-}
-
-function groupExists(route) {
-  return lookupGroup(group, function(getter, resolve) {
-    resolve(getter.result);
-    if (!getter.result) {
-      resolve(false);
-    } else {
-      resolve(true);
-    }
-  });
-}
-
-async function addGroupToDb(group, callback) {
-  var dbGroup = {
-    name: group.name,
-    routeIds: group.routes.map(route => route.id)
-  }
-
-  var transaction = db.transaction(["groups"], "readwrite");
-
-  transaction.onerror = function(event)  { 
-    console.error("Unable to access database", event); 
-  };
-
-  var objectStore = transaction.objectStore("groups");
-  var request = objectStore.add(dbGroup);
-  request.onsuccess = async function(event) {
-    group.id = event.target.result;
-    callback();
-  };
-}
-
-async function updateGroupInDb(group) {
-  var dbGroup = {
-    name: group.name,
-    routeIds: group.routes.map(route => route.id),
-    id: group.id
-  }
-
-  var transaction = db.transaction(["groups"], "readwrite");
-
-  transaction.onerror = function(event)  { 
-    console.error("Unable to access database", event); 
-  };
-
-  var objectStore = transaction.objectStore("groups");
-  var request = objectStore.put(dbGroup);
-  request.onsuccess = async function(event) {
-    
-  };
-}
-
-async function removeGroupFromDb(group) {
-  var transaction = db.transaction(["groups"], "readwrite");
-
-  transaction.onerror = function(event)  { 
-    console.error("Unable to access database", event); 
-  };
-
-  var objectStore = transaction.objectStore("groups");
-  var request = objectStore.delete(group.id);
-  request.onsuccess = function(event) {
-
-  }
-}
-
-async function removeRouteFromDb(route) {
-  var transaction = db.transaction(["routes"], "readwrite");
-
-  transaction.onerror = function(event)  { 
-    console.error("Unable to access database", event); 
-  };
-
-  var objectStore = transaction.objectStore("routes");
-  var request = objectStore.delete(route.id);
-  request.onsuccess = function(event) {
-
-  }
-}
-
-function lookupRoute(route, callback) {
-  var transaction = db.transaction(["routes"], "readwrite");
-  var objectStore = transaction.objectStore("routes");
-  var hashIndex = objectStore.index('hash');
-
-  return new Promise((resolve, reject) => {
-    var getter = hashIndex.get(route.hash);
-
-    getter.onsuccess = function(event) {
-      callback(getter, resolve);
-    }
-
-    getter.onerror = function(event) {
-      console.log("Unable to access database", event);
-      reject();
-    }
-  });
-}
-
-function routeExists(route) {
-  return lookupRoute(route, function(getter, resolve) {
-    if (!getter.result) {
-      resolve(false);
-    } else {
-      resolve(true);
-    }
-  });
-}
-
-function getRouteId(route) {
-  return lookupRoute(route, function(getter, resolve) {
-    resolve(getter.result.id);
-  });
-}
-
-async function addRouteToDb(route) {
-  var dbRoute = {
-    name: route.name,
-    length: route.length,
-    points: route.points,
-    startTime: route.startTime,
-    endTime: route.endTime,
-    hash: route.hash
-  }
-
-  var transaction = db.transaction(["routes"], "readwrite");
-
-  transaction.onerror = function(event)  { 
-    console.error("Unable to access database", event); 
-  };
-
-  var objectStore = transaction.objectStore("routes");
-  var request = objectStore.add(dbRoute);
-  request.onsuccess = async function(event) {
-    route.id = await getRouteId(route);
-  };
-}
-
-/******** Utils ***********/
 // Source: https://weeknumber.com/how-to/javascript
 // Returns the ISO week of the date.
 Date.prototype.getWeek = function() {
-  var date = new Date(this.getTime());
+  let date = new Date(this.getTime());
   date.setHours(0, 0, 0, 0);
   // Thursday in current week decides the year.
   date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
   // January 4 is always in week 1.
-  var week1 = new Date(date.getFullYear(), 0, 4);
+  let week1 = new Date(date.getFullYear(), 0, 4);
   // Adjust to Thursday in week 1 and count number of weeks from date to week1.
   return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000
                         - 3 + (week1.getDay() + 6) % 7) / 7);
 }
+
