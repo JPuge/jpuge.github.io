@@ -1204,9 +1204,7 @@ class MapUI {
 
     path.on('mouseover', event => {
       this.#updateDrawnRouteApperance(drawnRoute, "hovered");
-      if (!this.#selectedRoutes.includes(route)) {
-        this.#routeInfo.update(route);
-      }
+      this.#routeInfo.update(route);
     });
 
     path.on('mouseout', event => {
@@ -1214,9 +1212,10 @@ class MapUI {
         this.#updateDrawnRouteApperance(drawnRoute, "selected");
       } else {
         this.#updateDrawnRouteApperance(drawnRoute, "default");
-        this.#routeInfo.update(null);
-        this.#routeInfo.clear();
       }
+      
+      this.#routeInfo.update(null);
+      this.#routeInfo.clear();
     });
 
     path.on('click', event => {
