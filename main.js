@@ -1060,6 +1060,7 @@ class Groups {
     let group = this.#findGroup(id);
     this.#allGroups = this.#allGroups.filter(item => item !== group);
     this.#storage.removeGroup(group);
+    this.#selectedRoutes.clear();
 
     this.#snackBar.showUndoGroupDelete(async event => {
       this.#allGroups.push(group);
