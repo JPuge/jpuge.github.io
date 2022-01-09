@@ -25,7 +25,7 @@ class App {
     this.groupSelector = new GroupSelector(this.groups, this.selectedRoutes, this.snackBar);
 
     this.map = new MapUI(this.selectedRoutes, this.routeInfo);
-    this.routes = new Routes(this.dateSelectors, this.map);
+    this.routes = new Routes(this.dateSelectors, this.groups, this.map);
 
     this.storage = new Storage(this.routes, this.groups, this.dateSelectors);
     this.fileParser = new FileParser(this.routes, this.selectedRoutes);
@@ -39,6 +39,7 @@ class App {
     this.groups.setStorage(this.storage);
     this.routes.setStorage(this.storage);
     this.routeInfo.setSelectedRoutes(this.selectedRoutes);
+    this.selectedRoutes.setGroups(this.groups);
     this.selectedRoutes.setMap(this.map);
     this.selectedRoutes.setRoutes(this.routes);
 
@@ -210,6 +211,7 @@ class FileParser {
 
 class Routes {
   #dateSelectors;
+  #groups;
   #map;
   #storage;
 
@@ -219,8 +221,9 @@ class Routes {
   #allMonths = [];
   #allWeeks = [];
 
-  constructor(dateSelectors, map) {
+  constructor(dateSelectors, groups, map) {
     this.#dateSelectors = dateSelectors;
+    this.#groups = groups;
     this.#map = map;
   }
 
@@ -283,6 +286,7 @@ class Routes {
     for (let i = 0; i < routesToRemove.length; i++) {
       let route = routesToRemove[i];
       this.#allRoutes = this.#allRoutes.filter(item => item !== route);
+      this.#groups.removeRouteFromAllGroups(route);
       this.#storage.removeRoute(route);
       this.#map.removeRoute(route);
 
@@ -849,6 +853,7 @@ class SnackBar {
 
 class SelectedRoutes {
   #dateSelectors;
+  #groups;
   #map;
   #routeInfo;
   #routes;
@@ -865,6 +870,10 @@ class SelectedRoutes {
 
   setMap(map) {
     this.#map = map;
+  }
+
+  setGroups(groups) {
+    this.#groups = groups;
   }
 
   setRoutes(routes) {
@@ -984,6 +993,11 @@ class SelectedRoutes {
   }
 
   delete() {
+    let routeGroups = {};
+    for (const route of this.#allSelectedRoutes) {
+      routeGroups[route.id] = this.#groups.findRouteGroups(route);
+    }
+
     let deletedRoutes = this.#routes.remove(this.#allSelectedRoutes);
 
     this.#allSelectedRoutes = [];
@@ -994,6 +1008,14 @@ class SelectedRoutes {
 
     this.#snackBar.showUndoRouteDelete(deletedRoutes.length > 1, async (event) => {
       this.#routes.addRoutes(deletedRoutes);
+
+      for (const route of deletedRoutes) {
+        let groups = routeGroups[route.id];
+        for (const group of groups) {
+          this.#groups.addRoutesToGroup(group, [route]);
+        }
+      }
+
       deletedRoutes = [];
     });
   }
@@ -1055,9 +1077,11 @@ class Groups {
     throw "Unknown group ID " + id;
   }
 
-  #addRoutesToGroup(id, routes) {
-    let group = this.#findGroup(id);
+  #addRoutesToGroupId(id, routes) {
+    this.addRoutesToGroup(this.#findGroup(id), routes);
+  }
 
+  addRoutesToGroup(group, routes) {
     for (let i = 0; i < routes.length; i++) {
       addToSetArray(group.routes, routes[i]);
     }
@@ -1066,7 +1090,7 @@ class Groups {
   }
 
   addSelectedRoutesToGroup(id) {
-    this.#addRoutesToGroup(id, this.#selectedRoutes.get());
+    this.#addRoutesToGroupId(id, this.#selectedRoutes.get());
     this.focusGroup(id);
   }
 
@@ -1091,7 +1115,19 @@ class Groups {
     this.#selectedRoutes.set(group.routes);
   }
 
-  #findRouteGroups(route) {
+  removeRouteFromAllGroups(route) {
+    for (const group of this.#allGroups) {
+      let routeCountBefore = group.routes.length;
+      group.routes = group.routes.filter(item => item !== route);
+
+      let routeCountAfter = group.routes.length;
+      if (routeCountBefore != routeCountAfter) {
+        this.#storage.updateGroup(group);
+      }
+    }
+  }
+
+  findRouteGroups(route) {
     let foundGroups = [];
 
     for (let i = 0; i < this.#allGroups.length; i++) {
@@ -1109,7 +1145,7 @@ class Groups {
 
     for (let i = 0; i < routes.length; i++) {
       let route = routes[i];
-      let routeGroups = this.#findRouteGroups(route);
+      let routeGroups = this.findRouteGroups(route);
       for (let j = 0; j < routeGroups.length; j++) {
         addToSetArray(foundGroups, routeGroups[j]);
       }
@@ -1213,7 +1249,7 @@ class MapUI {
       } else {
         this.#updateDrawnRouteApperance(drawnRoute, "default");
       }
-      
+
       this.#routeInfo.update(null);
       this.#routeInfo.clear();
     });
