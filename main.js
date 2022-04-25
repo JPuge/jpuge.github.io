@@ -336,6 +336,87 @@ class Routes {
 }
 
 
+class RouteStatistics {
+  #longestYear;
+  #longestYearKm;
+  #longestMonth;
+  #longestMonthKm;
+  #longestWeek;
+  #longestWeekKm;
+  #longestRoute;
+
+  constructor(routes) {
+    this.#buildRouteStats(routes);
+    this.#buildDateStats(routes);
+  }
+
+  #buildRouteStats(routes) {
+    if (routes.count() == 0) {
+      this.#longestRoute = null;
+      return;
+    }
+
+    this.#longestRoute = routes.get(0);
+    for (const route of routes.get()) {
+      if (route.length > this.#longestRoute.length) {
+        this.#longestRoute = route;
+      }
+    }
+  }
+
+  #buildDateStats(routes) {
+    let years = {};
+    let months = {};
+    let weeks = {};
+
+    let monthNames = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+
+    for (const route of routes.get()) {
+      if (!route.startTime) continue;
+
+      let year = "" + route.startTime.getFullYear();
+      let month = monthNames[route.startTime.getMonth()] + " " + route.startTime.getFullYear();
+      let week = "Week " + route.startTime.getWeek() + " " + route.startTime.getFullYear();
+
+      years[year] = (year in years ? years[year] : 0) + route.length;
+      months[month] = (month in months ? months[month] : 0) + route.length;
+      weeks[week] = (week in weeks ? weeks[week] : 0) + route.length;
+    }
+
+    let yearsMax = this.#mapMax(years);
+    let monthsMax = this.#mapMax(months);
+    let weeksMax = this.#mapMax(weeks);
+
+    this.#longestYear = yearsMax.maxName;
+    this.#longestYearKm = yearsMax.maxKm;
+    this.#longestMonth = monthsMax.maxName;
+    this.#longestMonthKm = monthsMax.maxKm;
+    this.#longestWeek = weeksMax.maxName;
+    this.#longestWeekKm = weeksMax.maxKm;
+  }
+
+  #mapMax(map) {
+    let maxKm = 0;
+    let maxName = "";
+
+    for (const item in map) {
+      if (map[item] > maxKm) {
+        maxName = item;
+        maxKm = map[item];
+      }
+    }
+
+    return {
+      maxName: maxName,
+      maxKm: maxKm
+    };
+  }
+}
+
+
 class Controller {
   #dateSelectors;
   #fileParser;
