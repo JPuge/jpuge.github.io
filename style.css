@@ -121,3 +121,17 @@ body {
 #snackbarDiv {
   z-index: 10000;
 }
+
+#searchDialog {
+  width: 368px;
+}
+
+#searchDialogTable {
+  width: 300px;
+  height: 400px;
+  margin: auto;
+}
+
+#searchDialogResults td {
+  cursor: pointer;
+}

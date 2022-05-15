@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
     <link rel="stylesheet" href="https://code.getmdl.io/1.3.0/material.indigo-pink.min.css">
     <script defer src="https://code.getmdl.io/1.3.0/material.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.5.3"></script>
   </head>
 
   <body>
@@ -45,11 +46,32 @@
           <tr><td><div class="keyDiv">g</div></td><td>Show and create groups</td></tr>
           <tr><td><div class="keyDiv">a</div></td><td>Add selected routes to group</td></tr>
           <tr><td><div class="keyDiv">r</div></td><td>Remove selected routes to group</td></tr>
+          <tr><td><div class="keyDiv">s</div></td><td>Search for routes</td></tr>
           <tr><td><div class="keyDiv">?</div></td><td>Show or hide this help text</td></tr>
         </table>
       </div>
       <div class="mdl-dialog__actions">
         <button type="button" id="closeHelpBtn" class="mdl-button">Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="searchDialog" class="mdl-dialog">
+      <h3 class="mdl-dialog__title">Search</h3>
+      <div class="mdl-dialog__content">
+        <p>
+          <form action="#">
+            <div class="mdl-textfield mdl-js-textfield" id="newGroupContainer">
+              <input class="mdl-textfield__input" type="text" id="searchDialogInput">
+              <label class="mdl-textfield__label" for="searchDialogInput">Route name</label>
+            </div>
+          </form>
+          <table class="mdl-data-table mdl-js-data-table" id="searchDialogTable">
+            <tbody id="searchDialogResults"></tbody>
+          </table>
+        </p>
+      </div>
+      <div class="mdl-dialog__actions">
+        <button type="button" id="closeSearchBtn" class="mdl-button">Close</button>
       </div>
     </dialog>
 

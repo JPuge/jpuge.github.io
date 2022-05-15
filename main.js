@@ -7,6 +7,7 @@ class App {
   selectedRoutes;
   fileParser;
   storage;
+  search;
   groupSelector;
   map;
   groups;
@@ -30,9 +31,11 @@ class App {
     this.storage = new Storage(this.routes, this.groups, this.dateSelectors);
     this.fileParser = new FileParser(this.routes, this.selectedRoutes);
 
+    this.search = new Search(this.routes, this.selectedRoutes);
+
     this.controller = new Controller(this.dateSelectors, this.fileParser, 
                                       this.help, this.groupSelector, this.map, 
-                                      this.routeInfo, this.selectedRoutes);
+                                      this.routeInfo, this.selectedRoutes, this.search);
 
     this.dateSelectors.setSelectedRoutes(this.selectedRoutes);
     this.dateSelectors.setRoutes(this.routes);
@@ -422,6 +425,7 @@ class Controller {
   #fileParser;
   #groupSelector;
   #help;
+  #search;
   #map;
   #routeInfo;
   #selectedRoutes;
@@ -438,6 +442,12 @@ class Controller {
     if (this.#help.visible()) {
       if (key == 27) { // esc key
         this.#help.hide();
+      }
+    } else if (this.#search.visible()) {
+      if (key == 27) { // esc key
+        this.#search.hide();
+      } else {
+        keyHandled = false;
       }
     } else if (this.#groupSelector.visible()) {
       if (key == 27) { // esc key
@@ -466,6 +476,8 @@ class Controller {
         this.#groupSelector.selectGroupToRemove();
       } else if (key == 71) { // 'g' key
         this.#groupSelector.selectGroupToFocus();
+      } else if (key == 83) { // 's' key
+        this.#search.show();
       } else if (key == 73) { // 'i' key
         this.#routeInfo.toggleExtendedInfo();
       } else if (key == 18) { // alt key
@@ -504,7 +516,7 @@ class Controller {
     this.#fileParser.parseDroppedFiles(files);
   }
 
-  constructor(dateSelectors, fileParser, help, groupSelector, map, routeInfo, selectedRoutes) {
+  constructor(dateSelectors, fileParser, help, groupSelector, map, routeInfo, selectedRoutes, search) {
     this.#dateSelectors = dateSelectors;
     this.#fileParser = fileParser;
     this.#groupSelector = groupSelector;
@@ -512,6 +524,7 @@ class Controller {
     this.#map = map;
     this.#routeInfo = routeInfo;
     this.#selectedRoutes = selectedRoutes;
+    this.#search = search;
 
     let mapDiv = map.getDiv();
     mapDiv.addEventListener("dragover", this.#ignoreDefaults.bind(this));
@@ -525,6 +538,87 @@ class Controller {
     document.body.addEventListener("keyup", this.#mapKeyRelease.bind(this));
 
     window.onblur = () => map.shrinkRoutes();
+  }
+}
+
+class Search {
+  #searchShown = false;
+  #searchDialog;
+  #searchDialogInput;
+  #searchDialogResults;
+  #searcher;
+  #routes;
+  #selectedRoutes;
+
+  constructor(routes, selectedRoutes) {
+    this.#routes = routes;
+    this.#selectedRoutes = selectedRoutes;
+
+    this.#searchDialog = document.querySelector("#searchDialog");
+    this.#searchDialogInput = document.querySelector("#searchDialogInput");
+    this.#searchDialogResults = document.querySelector("#searchDialogResults");
+
+    searchDialogInput.addEventListener('keyup', this.update.bind(this));
+    document.querySelector("#closeSearchBtn").addEventListener('click', this.hide.bind(this));
+  }
+
+  #round(number) {
+    return Math.round(number * 100) / 100;
+  }
+
+  #prepare() {
+    this.#searcher = new Fuse(this.#routes.get(), {keys:["name"], includeScore: true, includeMatches: true});
+  }
+
+  #routeSelected(route) {
+    this.hide();
+    this.#selectedRoutes.set([route]);
+  }
+
+  update() {
+    let results = this.#searcher.search(this.#searchDialogInput.value);
+    let count = 0;
+    let rows = [];
+    let template = document.createElement('template');
+
+    results.forEach(result => {
+      let route = result.item;
+      if (count < 8) {
+        if (result.score < 0.5) {
+          template.innerHTML = "<tr><td width='70% !important' style='text-overflow:ellipsis; overflow: hidden; max-width: 167px; white-space: nowrap;' class='mdl-data-table__cell--non-numeric'>" + route.name + "</td><td width='30% !important'>" + this.#round(route.length) + " km</td></tr>";
+          let row = template.content.firstChild;
+          row.addEventListener('click', function() {
+            this.#routeSelected(route);
+          }.bind(this));
+          rows.push(row);
+          count++;
+        }
+      }
+    });
+    this.#searchDialogResults.replaceChildren(...rows);
+  }
+
+  hide() {
+    this.#searchDialog.close();
+    this.#searchShown = false;
+  }
+
+  show() {
+    this.#prepare();
+    this.#searchDialog.showModal();
+    this.#searchShown = true;
+  }
+
+  toggle() {
+    if (this.#searchShown) {
+      this.hide();
+    } else {
+      this.show();
+    }
+  }
+
+  visible() {
+    return this.#searchShown;
   }
 }
 
