@@ -6,6 +6,7 @@ class App {
   dateSelectors;
   selectedRoutes;
   fileParser;
+  stats;
   storage;
   search;
   groupSelector;
@@ -32,11 +33,14 @@ class App {
     this.fileParser = new FileParser(this.routes, this.selectedRoutes);
 
     this.search = new Search(this.routes, this.selectedRoutes);
+    this.stats = new RouteStatistics(this.routes, this.selectedRoutes, this.dateSelectors);
 
     this.controller = new Controller(this.dateSelectors, this.fileParser, 
                                       this.help, this.groupSelector, this.map, 
-                                      this.routeInfo, this.selectedRoutes, this.search);
+                                      this.routeInfo, this.selectedRoutes, this.search,
+                                      this.stats);
 
+    // Resolve circular dependencies
     this.dateSelectors.setSelectedRoutes(this.selectedRoutes);
     this.dateSelectors.setRoutes(this.routes);
     this.groups.setStorage(this.storage);
@@ -83,6 +87,7 @@ class FileParser {
         let startTime;
         let endTime;
         let points = [];
+        let pointTimestamps = []; 
         let trkpts = segment.getElementsByTagName("trkpt");
         for (let k = 0; k < trkpts.length; k++) {
           let trkpt = trkpts[k];
@@ -91,20 +96,22 @@ class FileParser {
 
           let lat = parseFloat(trkpt.getAttribute("lat"));
           let lon = parseFloat(trkpt.getAttribute("lon"));
-          let point = {
-            lat: lat, lng: lon
-          };
-          points.push(point);
+          let time = null;
 
           let timeTags = trkpt.getElementsByTagName("time");
           if (timeTags.length > 0) {
-            let time = new Date(timeTags[0].textContent);
+            time = new Date(timeTags[0].textContent);
             if (firstPoint) {
               startTime = time;
             } else if (lastPoint) {
               endTime = time;
             }
           }
+
+          let point = {
+            lat: lat, lng: lon, timestamp: time
+          };
+          points.push(point);
         }
 
         let newRoute = {
@@ -341,26 +348,154 @@ class Routes {
 
 class RouteStatistics {
   #longestYear;
-  #longestYearKm;
   #longestMonth;
-  #longestMonthKm;
   #longestWeek;
-  #longestWeekKm;
   #longestRoute;
+  #fastest5K;
+  #fastest10K;
+  #fastest20K;
+  #fastestMarathon;
+  #totalDistance;
+  #totalRoutes;
 
-  constructor(routes) {
+  #statsShown = false;
+  #statsDialog;
+  #statsDialogBody;
+
+  #routes;
+  #selectedRoutes;
+  #dateSelectors;
+
+  constructor(routes, selectedRoutes, dateSelectors) {
+    this.#routes = routes;
+    this.#selectedRoutes = selectedRoutes;
+    this.#dateSelectors = dateSelectors;
+    this.#statsDialog = document.querySelector("#statsDialog");
+    this.#statsDialogBody = document.querySelector("#statsDialogBody");
+
+    document.querySelector("#closeStatsBtn").addEventListener('click', this.hide.bind(this));
+  }
+
+  #clear() {
+    this.#longestYear = null;
+    this.#longestMonth = null;
+    this.#longestWeek = null;
+    this.#longestRoute = null;
+    this.#fastest5K = null;
+    this.#fastest10K = null;
+    this.#fastest20K = null;
+    this.#fastestMarathon = null;
+    this.#totalDistance = 0;
+    this.#totalRoutes = 0;
+  }
+
+  #update(routes) {
+    this.#clear();
     this.#buildRouteStats(routes);
     this.#buildDateStats(routes);
+    this.#buildFastestRoutes(routes);
+    this.#buildTable(routes);
+  }
+
+  #buildTable(routes) {
+    let rows = [];
+
+    this.#createTotalRows(rows, routes);
+    this.#createDateRows(rows);
+    this.#createLongestRouteRow(rows);
+    this.#createFastestDistanceRows(rows);
+    this.#statsDialogBody.replaceChildren(...rows);
+  }
+
+  #createTotalRows(rows, routes) {
+    let selectAll = () => {
+      this.hide();
+      this.#selectedRoutes.set(routes);
+    };
+    rows.push(this.#createRow("Number of routes", this.#totalRoutes, selectAll));
+    rows.push(this.#createRow("Total distance", `${this.#round(this.#totalDistance)} km`, selectAll));
+  }
+
+  #createDateRows(rows) {
+    let showDate = (longestPeriod) => () => {
+      if (longestPeriod == null) return;
+      this.#dateSelectors.show();
+      this.#dateSelectors.select(longestPeriod.date);
+      this.hide();
+    }
+
+    rows.push(this.#createRow("Year with longest distance", 
+      (this.#longestYear == null ? '-' : `${this.#longestYear.name} (${this.#round(this.#longestYear.length)} km)`), 
+      showDate(this.#longestYear)));
+    rows.push(this.#createRow("Month with longest distance", 
+      (this.#longestMonth == null ? '-' : `${this.#longestMonth.name} (${this.#round(this.#longestMonth.length)} km)`), 
+      showDate(this.#longestMonth)));
+    rows.push(this.#createRow("Week with longest distance", 
+      (this.#longestWeek == null ? '-' : `${this.#longestWeek.name} (${this.#round(this.#longestWeek.length)} km)`), 
+      showDate(this.#longestWeek)));
+  }
+
+  #createLongestRouteRow(rows) {
+    rows.push(this.#createRow("Longest route", 
+      (this.#longestRoute == null ? '-' : `${this.#longestRoute.name} (${this.#round(this.#longestRoute.length)} km)`), 
+      function () {
+        this.hide();
+        if (this.#longestRoute != null) {
+          this.#selectedRoutes.set([this.#longestRoute]);
+        }
+      }.bind(this)));
+  }
+
+  #createFastestDistanceRows(rows) {
+    rows.push(this.#createRow("Fastest 5 km", 
+      (this.#fastest5K == null ? '-' : `${this.#fastest5K.route.name} (${this.#fastest5K.timeStr})`), 
+      function() { this.#fastestDistanceClicked(this.#fastest5K); }.bind(this)));
+    rows.push(this.#createRow("Fastest 10 km", 
+      (this.#fastest10K == null ? '-' : `${this.#fastest10K.route.name} (${this.#fastest10K.timeStr})`), 
+      function() { this.#fastestDistanceClicked(this.#fastest10K); }.bind(this)));
+    rows.push(this.#createRow("Fastest 20 km", 
+      (this.#fastest20K == null ? '-' : `${this.#fastest20K.route.name} (${this.#fastest20K.timeStr})`), 
+      function() { this.#fastestDistanceClicked(this.#fastest20K); }.bind(this)));
+    rows.push(this.#createRow("Fastest marathon", 
+      (this.#fastestMarathon == null ? '-' : `${this.#fastestMarathon.route.name} (${this.#fastestMarathon.timeStr})`), 
+      function() { this.#fastestDistanceClicked(this.#fastestMarathon); }.bind(this)));
+    
+  }
+
+  #createRow(description, value, callback) {
+    let template = document.createElement('template');
+    template.innerHTML = `<tr><td width='70% !important' style='text-overflow:ellipsis; overflow: hidden; max-width: 167px; white-space: nowrap;' class='mdl-data-table__cell--non-numeric'>${description}</td><td width='30% !important'>${value}</td></tr>`;
+    if (callback != null) {
+      template.content.firstChild.addEventListener("click", callback); 
+    }
+    return template.content.firstChild;
+  }
+
+  #fastestDistanceClicked(fastesdistance) {
+    this.hide();
+    if (fastesdistance.route != null) {
+      this.#selectedRoutes.set([fastesdistance.route]);
+    }
+  }
+
+  #buildFastestRoutes(routes) {
+    this.#fastest5K = this.#fastestRoute(routes, 5);
+    this.#fastest10K = this.#fastestRoute(routes, 10);
+    this.#fastest20K = this.#fastestRoute(routes, 20);
+    this.#fastestMarathon = this.#fastestRoute(routes, 42.195);
   }
 
   #buildRouteStats(routes) {
-    if (routes.count() == 0) {
+    this.#totalRoutes = routes.length;
+    if (this.#totalRoutes == 0) {
       this.#longestRoute = null;
       return;
     }
 
-    this.#longestRoute = routes.get(0);
-    for (const route of routes.get()) {
+    this.#totalDistance = 0;
+    this.#longestRoute = routes[0];
+    for (const route of routes) {
+      this.#totalDistance += route.length;
       if (route.length > this.#longestRoute.length) {
         this.#longestRoute = route;
       }
@@ -377,45 +512,167 @@ class RouteStatistics {
       "July", "August", "September", "October", "November", "December"
     ];
 
-    for (const route of routes.get()) {
+    for (const route of routes) {
       if (!route.startTime) continue;
 
-      let year = "" + route.startTime.getFullYear();
-      let month = monthNames[route.startTime.getMonth()] + " " + route.startTime.getFullYear();
-      let week = "Week " + route.startTime.getWeek() + " " + route.startTime.getFullYear();
+      let year = route.startTime.getFullYear();
+      let month = route.startTime.getMonth();
+      let week = route.startTime.getWeek();
 
-      years[year] = (year in years ? years[year] : 0) + route.length;
-      months[month] = (month in months ? months[month] : 0) + route.length;
-      weeks[week] = (week in weeks ? weeks[week] : 0) + route.length;
+      let yearName = "" + year;
+      let monthName = monthNames[month] + " " + year;
+      let weekName = "Week " + week + " " + year;
+
+      this.#addToDateArray(years, yearName, route.length, { year: year, month: null, week: null});
+      this.#addToDateArray(months, monthName, route.length, { year: year, month: month, week: null});
+      this.#addToDateArray(weeks, weekName, route.length, { year: year, month: null, week: week});
     }
 
-    let yearsMax = this.#mapMax(years);
-    let monthsMax = this.#mapMax(months);
-    let weeksMax = this.#mapMax(weeks);
+    this.#longestYear = this.#mapMax(years);
+    this.#longestMonth = this.#mapMax(months);
+    this.#longestWeek = this.#mapMax(weeks);
+  }
 
-    this.#longestYear = yearsMax.maxName;
-    this.#longestYearKm = yearsMax.maxKm;
-    this.#longestMonth = monthsMax.maxName;
-    this.#longestMonthKm = monthsMax.maxKm;
-    this.#longestWeek = weeksMax.maxName;
-    this.#longestWeekKm = weeksMax.maxKm;
+  #addToDateArray(array, name, distance, date) {
+    if (name in array) {
+      array[name].length += distance;
+    } else {
+      array[name] = {
+        name: name,
+        length: distance,
+        date: date
+      };
+    }
   }
 
   #mapMax(map) {
-    let maxKm = 0;
-    let maxName = "";
+    let max = null;
+    let maxLength = 0;
 
     for (const item in map) {
-      if (map[item] > maxKm) {
-        maxName = item;
-        maxKm = map[item];
+      if (map[item].length > maxLength) {
+        max = map[item];
+        maxLength = map[item].length
       }
     }
 
-    return {
-      maxName: maxName,
-      maxKm: maxKm
-    };
+    return max;
+  }
+
+  #degreesToRadians(degrees) {
+    return degrees * Math.PI / 180;
+  }
+
+  #distanceInKmBetweenPoints(point1, point2) {
+    let earthRadiusKm = 6371;
+
+    let dLat = this.#degreesToRadians(point2.lat-point1.lat);
+    let dLng = this.#degreesToRadians(point2.lng-point1.lng);
+
+    let dLat1 = this.#degreesToRadians(point1.lat);
+    let dLat2 = this.#degreesToRadians(point2.lat);
+
+    let a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.sin(dLng/2) * Math.sin(dLng/2) * Math.cos(dLat1) * Math.cos(dLat2); 
+    let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    return earthRadiusKm * c;
+  }
+
+  #fastestRoute(routes, distance) {
+    let fastestRoute = null;
+    routes.forEach(route => {
+      let fastestStretch = this.#fastestStretch(route, distance);
+      if (fastestRoute == null || (fastestStretch != null && fastestRoute.time > fastestStretch.time)) {
+        fastestRoute = fastestStretch;
+      }
+    });
+    return fastestRoute;
+  }
+
+  #fastestStretch(route, distance) {
+    let curDistance = 0;
+    let startIdx = 0;
+    let points = route.points;
+    let fastestTime = 0;
+    let fastestTimeStartIdx = -1;
+    let fastestTimeEndIdx = -1;
+
+    let curIdx = 0;
+    while (curIdx < points.length - 1) {
+      while (curIdx < points.length - 1 && curDistance < distance) {
+        curDistance += this.#distanceInKmBetweenPoints(points[curIdx], points[curIdx + 1]);
+        curIdx++;
+      }
+
+      if (curDistance < distance) {
+        break;
+      }
+
+      if (points[curIdx].timestamp == null) {
+        return null;
+      }
+
+      let time = points[curIdx].timestamp - points[startIdx].timestamp;
+      if (fastestTime == 0 || time < fastestTime) {
+        fastestTime = time;
+        fastestTimeStartIdx = startIdx;
+        fastestTimeEndIdx = curIdx;
+      }
+
+      curDistance -= this.#distanceInKmBetweenPoints(points[startIdx], points[startIdx + 1]);
+      startIdx += 1;
+    }
+
+    if (fastestTime == 0) {
+      return null;
+    } else {
+      return { time: fastestTime, timeStr: this.#formatTime(fastestTime), start: fastestTimeStartIdx, end: fastestTimeEndIdx, route: route };
+    }
+  }
+
+  #round(number) {
+    return Math.round(number * 100) / 100;
+  }
+  
+  #formatTime(timestampDiff) {
+    let msPerSecond = 1000;
+    let msPerMinute = msPerSecond * 60;
+    let msPerHour = msPerMinute * 60;
+
+    let hours = Math.floor(timestampDiff / msPerHour);
+    timestampDiff -= hours * msPerHour;
+
+    let minutes = Math.floor(timestampDiff / msPerMinute);
+    timestampDiff -= minutes * msPerMinute;
+
+    let seconds = Math.floor(timestampDiff / msPerSecond);
+
+    return "" + hours + ":" + minutes + ":" + seconds;
+  }
+
+  hide() {
+    this.#statsDialog.close();
+    this.#statsShown = false;
+  }
+
+  show() {
+    let selectedRoutes = this.#selectedRoutes.get();
+    let routes = (selectedRoutes.length > 0 ? selectedRoutes : this.#routes.get());
+    this.#update(routes);
+    this.#statsDialog.showModal();
+    this.#statsShown = true;
+  }
+
+  toggle() {
+    if (this.#statsShown) {
+      this.hide();
+    } else {
+      this.show();
+    }
+  }
+
+  visible() {
+    return this.#statsShown;
   }
 }
 
@@ -426,6 +683,7 @@ class Controller {
   #groupSelector;
   #help;
   #search;
+  #stats;
   #map;
   #routeInfo;
   #selectedRoutes;
@@ -448,6 +706,10 @@ class Controller {
         this.#search.hide();
       } else {
         keyHandled = false;
+      }
+    } else if (this.#stats.visible()) {
+      if (key == 27 || key == 78) { // esc or 'n' key
+        this.#stats.hide();
       }
     } else if (this.#groupSelector.visible()) {
       if (key == 27) { // esc key
@@ -478,6 +740,8 @@ class Controller {
         this.#groupSelector.selectGroupToFocus();
       } else if (key == 83) { // 's' key
         this.#search.show();
+      } else if (key == 78) { // 'n' key
+        this.#stats.show();
       } else if (key == 73) { // 'i' key
         this.#routeInfo.toggleExtendedInfo();
       } else if (key == 18) { // alt key
@@ -516,7 +780,7 @@ class Controller {
     this.#fileParser.parseDroppedFiles(files);
   }
 
-  constructor(dateSelectors, fileParser, help, groupSelector, map, routeInfo, selectedRoutes, search) {
+  constructor(dateSelectors, fileParser, help, groupSelector, map, routeInfo, selectedRoutes, search, stats) {
     this.#dateSelectors = dateSelectors;
     this.#fileParser = fileParser;
     this.#groupSelector = groupSelector;
@@ -525,6 +789,7 @@ class Controller {
     this.#routeInfo = routeInfo;
     this.#selectedRoutes = selectedRoutes;
     this.#search = search;
+    this.#stats = stats;
 
     let mapDiv = map.getDiv();
     mapDiv.addEventListener("dragover", this.#ignoreDefaults.bind(this));
@@ -862,6 +1127,13 @@ class DateSelectors {
     }
   }
 
+  select(date) {
+    this.#yearSelector.value = "" + date.year;
+    this.#monthSelector.value = "" + date.month;
+    this.#weekSelector.value = "" + date.week;
+    this.#dateSelectorsChanged(false, false);
+  }
+
   clear() {
     this.#yearSelector.value = "null";
     this.#monthSelector.value = "null";
@@ -892,6 +1164,10 @@ class DateSelectors {
 
   toggle() {
     this.#dateSelectorsDiv.hidden = !this.#dateSelectorsDiv.hidden;
+  }
+
+  show() {
+    this.#dateSelectorsDiv.hidden = false;
   }
 }
 

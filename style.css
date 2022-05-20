@@ -135,3 +135,17 @@ body {
 #searchDialogResults td {
   cursor: pointer;
 }
+
+#statsDialog {
+  width: 568px;
+}
+
+#statsDialogTable {
+  width: 500px;
+  height: 400px;
+  margin: auto;
+}
+
+#statsDialogBody td {
+  cursor: pointer;
+}

@@ -47,6 +47,7 @@
           <tr><td><div class="keyDiv">a</div></td><td>Add selected routes to group</td></tr>
           <tr><td><div class="keyDiv">r</div></td><td>Remove selected routes to group</td></tr>
           <tr><td><div class="keyDiv">s</div></td><td>Search for routes</td></tr>
+          <tr><td><div class="keyDiv">n</div></td><td>Show route statistics</td></tr>
           <tr><td><div class="keyDiv">?</div></td><td>Show or hide this help text</td></tr>
         </table>
       </div>
@@ -72,6 +73,20 @@
       </div>
       <div class="mdl-dialog__actions">
         <button type="button" id="closeSearchBtn" class="mdl-button">Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="statsDialog" class="mdl-dialog">
+      <h3 class="mdl-dialog__title">Statistics</h3>
+      <div class="mdl-dialog__content">
+        <p>
+          <table class="mdl-data-table mdl-js-data-table" id="statsDialogTable">
+            <tbody id="statsDialogBody"></tbody>
+          </table>
+        </p>
+      </div>
+      <div class="mdl-dialog__actions">
+        <button type="button" id="closeStatsBtn" class="mdl-button">Close</button>
       </div>
     </dialog>
 
