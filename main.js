@@ -33,7 +33,7 @@ class App {
     this.fileParser = new FileParser(this.routes, this.selectedRoutes);
 
     this.search = new Search(this.routes, this.selectedRoutes);
-    this.stats = new RouteStatistics(this.routes, this.selectedRoutes, this.dateSelectors);
+    this.stats = new RouteStatistics(this.routes, this.selectedRoutes, this.dateSelectors, this.map);
 
     this.controller = new Controller(this.dateSelectors, this.fileParser, 
                                       this.help, this.groupSelector, this.map, 
@@ -362,14 +362,16 @@ class RouteStatistics {
   #statsDialog;
   #statsDialogBody;
 
+  #dateSelectors;
+  #map;
   #routes;
   #selectedRoutes;
-  #dateSelectors;
 
-  constructor(routes, selectedRoutes, dateSelectors) {
+  constructor(routes, selectedRoutes, dateSelectors, map) {
     this.#routes = routes;
     this.#selectedRoutes = selectedRoutes;
     this.#dateSelectors = dateSelectors;
+    this.#map = map;
     this.#statsDialog = document.querySelector("#statsDialog");
     this.#statsDialogBody = document.querySelector("#statsDialogBody");
 
@@ -471,10 +473,11 @@ class RouteStatistics {
     return template.content.firstChild;
   }
 
-  #fastestDistanceClicked(fastesdistance) {
+  #fastestDistanceClicked(fastesDistance) {
     this.hide();
-    if (fastesdistance.route != null) {
-      this.#selectedRoutes.set([fastesdistance.route]);
+    if (fastesDistance != null) {
+      this.#selectedRoutes.set([fastesDistance.route]);
+      this.#map.drawRouteOverlay(fastesDistance.route, fastesDistance.start, fastesDistance.end);
     }
   }
 
@@ -647,7 +650,7 @@ class RouteStatistics {
 
     let seconds = Math.floor(timestampDiff / msPerSecond);
 
-    return "" + hours + ":" + minutes + ":" + seconds;
+    return "" + hours + ":" + (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
   }
 
   hide() {
@@ -1344,6 +1347,7 @@ class SelectedRoutes {
     this.#allSelectedRoutes = [];
     this.#routeInfo.clear();
     this.#map.unhideAllRoutes();
+    this.#map.removeRouteOverlay();
     if (clearDate) {
       this.#dateSelectors.clear();
     }
@@ -1353,6 +1357,7 @@ class SelectedRoutes {
     this.clear(false);
     this.#allSelectedRoutes = routes;
     this.#updateSelectedRoutesLength();
+    this.#map.removeRouteOverlay();
     for (let i = 0; i < routes.length; i++) {
       routes[i].selected = true;
       this.#map.updateRouteApperance(routes[i], "selected");
@@ -1366,6 +1371,7 @@ class SelectedRoutes {
 
     this.#allSelectedRoutes.push(route);
     route.selected = true;
+    this.#map.removeRouteOverlay();
     this.#map.updateRouteApperance(route, "selected");
     this.#updateSelectedRoutesLength();
     this.#routeInfo.update(null);
@@ -1376,6 +1382,7 @@ class SelectedRoutes {
 
     this.#allSelectedRoutes = this.#allSelectedRoutes.filter(item => item !== route);
     route.selected = false;
+    this.#map.removeRouteOverlay();
     this.#map.updateRouteApperance(route, "hovered");
     this.#updateSelectedRoutesLength();
     this.#routeInfo.update(route);
@@ -1453,6 +1460,7 @@ class SelectedRoutes {
 
     this.#allSelectedRoutes = [];
     this.#updateSelectedRoutesLength();
+    this.#map.removeRouteOverlay();
     this.#routeInfo.clear();
     this.#routes.rebuildDateOverview();
     this.#dateSelectors.update();
@@ -1618,6 +1626,7 @@ class MapUI {
   #routesEnlarged = false;
   #routesHidden = false;
   #drawnRoutes = [];
+  #drawnOverlay = null;
 
   #routeStyles = {
     "default": {
@@ -1636,6 +1645,12 @@ class MapUI {
       color: "#CC0000",
       weight: 3,
       opacity: 0.9,
+      smothFactor: 1
+    },
+    "overlay": {
+      color: "#EB9035",
+      weight: 3,
+      opacity: 1,
       smothFactor: 1
     },
   };
@@ -1715,10 +1730,33 @@ class MapUI {
     });
   }
 
+  drawRouteOverlay(route, fromIdx, toIdx) {
+    this.removeRouteOverlay();
+
+    let points = route.points.slice(fromIdx, toIdx + 1);
+    let path = L.polyline(points);
+    let drawnOverlay = {
+      path: path,
+      route: route,
+      appearence: null,
+      visible: true
+    };
+    this.#updateDrawnRouteApperance(drawnOverlay, "overlay");
+    this.#drawnOverlay = drawnOverlay;
+    path.addTo(this.#mapRef);
+    path.bringToFront();
+  }
+
   removeRoute(route) {
     let drawnRoute = this.#findDrawnRoute(route);
     drawnRoute.path.remove();
     this.#drawnRoutes = this.#drawnRoutes.filter(item => item !== drawnRoute);
+  }
+
+  removeRouteOverlay() {
+    if (this.#drawnOverlay == null) return;
+    this.#drawnOverlay.path.remove();
+    this.#drawnOverlay = null;
   }
 
   zoomToRoutes(routes) {
@@ -1790,15 +1828,24 @@ class MapUI {
     } else {
       drawnRoute.path.bringToFront();
     }
+    
+    if (this.#drawnOverlay != null) {
+      this.#drawnOverlay.path.bringToFront();
+    }
   }
 
   #changeRouteWidth(diff) {
     this.#routeStyles["default"].weight += diff;
     this.#routeStyles["selected"].weight += diff;
     this.#routeStyles["hovered"].weight += diff;
+    this.#routeStyles["overlay"].weight += diff;
 
     for (let i = 0; i < this.#drawnRoutes.length; i++) {
       this.#updateDrawnRouteApperance(this.#drawnRoutes[i], this.#drawnRoutes[i].appearence);
+    }
+
+    if (this.#drawnOverlay != null) {
+      this.#updateDrawnRouteApperance(this.#drawnOverlay, this.#drawnOverlay.appearence);
     }
   }
 
