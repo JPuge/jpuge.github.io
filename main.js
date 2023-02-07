@@ -354,6 +354,7 @@ class RouteStatistics {
   #fastest5K;
   #fastest10K;
   #fastest20K;
+  #fastest100K;
   #fastestMarathon;
   #totalDistance;
   #totalRoutes;
@@ -386,6 +387,7 @@ class RouteStatistics {
     this.#fastest5K = null;
     this.#fastest10K = null;
     this.#fastest20K = null;
+    this.#fastest100K = null;
     this.#fastestMarathon = null;
     this.#totalDistance = 0;
     this.#totalRoutes = 0;
@@ -458,6 +460,9 @@ class RouteStatistics {
     rows.push(this.#createRow("Fastest 20 km", 
       (this.#fastest20K == null ? '-' : `${this.#fastest20K.route.name} (${this.#fastest20K.timeStr})`), 
       function() { this.#fastestDistanceClicked(this.#fastest20K); }.bind(this)));
+    rows.push(this.#createRow("Fastest 100 km", 
+      (this.#fastest100K == null ? '-' : `${this.#fastest100K.route.name} (${this.#fastest100K.timeStr})`), 
+      function() { this.#fastestDistanceClicked(this.#fastest100K); }.bind(this)));
     rows.push(this.#createRow("Fastest marathon", 
       (this.#fastestMarathon == null ? '-' : `${this.#fastestMarathon.route.name} (${this.#fastestMarathon.timeStr})`), 
       function() { this.#fastestDistanceClicked(this.#fastestMarathon); }.bind(this)));
@@ -485,6 +490,7 @@ class RouteStatistics {
     this.#fastest5K = this.#fastestRoute(routes, 5);
     this.#fastest10K = this.#fastestRoute(routes, 10);
     this.#fastest20K = this.#fastestRoute(routes, 20);
+    this.#fastest100K = this.#fastestRoute(routes, 100);
     this.#fastestMarathon = this.#fastestRoute(routes, 42.195);
   }
 
