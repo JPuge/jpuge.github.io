@@ -5,15 +5,18 @@ class App {
   routeInfo;
   dateSelectors;
   selectedRoutes;
-  fileParser;
   stats;
   storage;
   search;
   groupSelector;
   map;
+  maps;
+  mapSelector;
   groups;
   routes;
   controller;
+
+  shownMapId;
 
   constructor() {
     this.help = new Help();
@@ -23,48 +26,66 @@ class App {
     this.dateSelectors = new DateSelectors();
     this.selectedRoutes = new SelectedRoutes(this.dateSelectors, this.routeInfo, this.snackBar);
 
-    this.groups = new Groups(this.selectedRoutes, this.snackBar);
-    this.groupSelector = new GroupSelector(this.groups, this.selectedRoutes, this.snackBar);
+    this.groupSelector = new GroupSelector(this.selectedRoutes, this.snackBar);
+    this.search = new Search(this.selectedRoutes);
 
     this.map = new MapUI(this.selectedRoutes, this.routeInfo);
-    this.routes = new Routes(this.dateSelectors, this.groups, this.map);
+    this.controller = new Controller(this.map);
+    this.mapSelector = new MapSelector(this, this.snackBar);
 
-    this.storage = new Storage(this.routes, this.groups, this.dateSelectors);
-    this.fileParser = new FileParser(this.routes, this.selectedRoutes);
+    this.stats = new RouteStatistics(this.selectedRoutes, this.dateSelectors, this.map);
 
-    this.search = new Search(this.routes, this.selectedRoutes);
-    this.stats = new RouteStatistics(this.routes, this.selectedRoutes, this.dateSelectors, this.map);
+    this.maps = new Maps(this.snackBar);
 
-    this.controller = new Controller(this.dateSelectors, this.fileParser, 
-                                      this.help, this.groupSelector, this.map, 
-                                      this.routeInfo, this.selectedRoutes, this.search,
-                                      this.stats);
-
-    // Resolve circular dependencies
     this.dateSelectors.setSelectedRoutes(this.selectedRoutes);
-    this.dateSelectors.setRoutes(this.routes);
-    this.groups.setStorage(this.storage);
-    this.routes.setStorage(this.storage);
     this.routeInfo.setSelectedRoutes(this.selectedRoutes);
-    this.selectedRoutes.setGroups(this.groups);
     this.selectedRoutes.setMap(this.map);
-    this.selectedRoutes.setRoutes(this.routes);
 
-    this.storage.load();
-    this.map.showCurrentPosition();
+    this.#initStorage().then(() => {
+      this.loadMap(null, true);
+    });
+  }
+
+  async #initStorage() {
+    this.storage = new Storage();
+
+    await this.storage.connect();
+    await this.storage.loadMaps(this.maps);
+  }
+
+  async loadMap(mapId, updatePos) {
+    mapId = (mapId == null ? this.maps.get()[0].id : mapId);
+    this.shownMapId = mapId;
+
+    this.selectedRoutes.clear();
+    this.map.clear();
+
+    this.groups = new Groups(this.selectedRoutes, this.snackBar, mapId);
+    this.routes = new Routes(this.dateSelectors, this.groups, this.map, this.snackBar);
+
+    await this.storage.loadRoutes(mapId, this.routes);
+    await this.storage.loadGroups(mapId, this.groups, this.routes);
+
+    // Update existing objects
+    this.dateSelectors.setRoutes(this.routes);
+    this.groupSelector.setGroups(this.groups);
+    this.mapSelector.setMaps(this.maps);
+    this.search.setRoutes(this.routes);
+    this.selectedRoutes.setRoutes(this.routes);
+    this.stats.setRoutes(this.routes);
+    this.controller.connect(this.dateSelectors, this.help, this.groupSelector, mapId, this.mapSelector,
+                            this.routeInfo, this.routes, this.selectedRoutes, this.search, this.stats);
+
+    this.dateSelectors.update();
+
+    if (updatePos) {
+      this.map.showCurrentPosition();
+    }
   }
 }
 
 class FileParser {
-  #routes;
-  #selectedRoutes;
-
-  constructor(routes, selectedRoutes) {
-    this.#routes = routes;
-    this.#selectedRoutes = selectedRoutes;
-  }
-
-  async #parseRoutes(gpx) {
+  static async #parseRoutes(gpx, mapId) {
     let routes = [];
 
     let parser = new DOMParser();
@@ -116,11 +137,12 @@ class FileParser {
 
         let newRoute = {
           name: name,
+          mapId: mapId,
           points: points,
-          length: this.#routeLength(points),
+          length: FileParser.#routeLength(points),
           startTime: startTime,
           endTime: endTime,
-          hash: await this.#routeHash(points),
+          hash: await FileParser.#routeHash(points, mapId),
           visible: true,
           selected: false
         };
@@ -132,18 +154,18 @@ class FileParser {
     return routes;
   }
 
-  #degreesToRadians(degrees) {
+  static #degreesToRadians(degrees) {
     return degrees * Math.PI / 180;
   }
 
-  #distanceInKmBetweenPoints(point1, point2) {
+ static #distanceInKmBetweenPoints(point1, point2) {
     let earthRadiusKm = 6371;
 
-    let dLat = this.#degreesToRadians(point2.lat-point1.lat);
-    let dLng = this.#degreesToRadians(point2.lng-point1.lng);
+    let dLat = FileParser.#degreesToRadians(point2.lat-point1.lat);
+    let dLng = FileParser.#degreesToRadians(point2.lng-point1.lng);
 
-    let dLat1 = this.#degreesToRadians(point1.lat);
-    let dLat2 = this.#degreesToRadians(point2.lat);
+    let dLat1 = FileParser.#degreesToRadians(point1.lat);
+    let dLat2 = FileParser.#degreesToRadians(point2.lat);
 
     let a = Math.sin(dLat/2) * Math.sin(dLat/2) +
             Math.sin(dLng/2) * Math.sin(dLng/2) * Math.cos(dLat1) * Math.cos(dLat2); 
@@ -151,24 +173,25 @@ class FileParser {
     return earthRadiusKm * c;
   }
 
-  #routeLength(points) {
+  static #routeLength(points) {
     let length = 0;
 
     let prevPoint = points[0];
 
     for (let i = 1; i < points.length; i++) {
-      length += this.#distanceInKmBetweenPoints(prevPoint, points[i]);
+      length += FileParser.#distanceInKmBetweenPoints(prevPoint, points[i]);
       prevPoint = points[i];
     }
 
     return length;
   }
 
-  async #routeHash(points) {
+  static async #routeHash(points, mapId) {
     let pointMsg = points.map(point => point.lat + point.lng).toString();
 
     // encode as UTF-8
-    const msgBuffer = new TextEncoder().encode(pointMsg);
+    const encoder = new TextEncoder();
+    const msgBuffer = encoder.encode(pointMsg + "map" + mapId);
 
     // hash the message
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -181,26 +204,21 @@ class FileParser {
     return hashHex;
   }
 
-  async #addGpxFile(gpxRoute) {
-    let fileRoutes = await this.#parseRoutes(gpxRoute);
-    return await this.#routes.addRoutes(fileRoutes);
-  }
-
-  #parseDroppedFile(file) {
+  static #parseDroppedFile(file, mapId) {
     let reader = new FileReader();
     return new Promise((resolve, reject) => {
       reader.onload = async e => { 
-        let routes = await this.#addGpxFile(e.target.result);
+        let routes = await FileParser.#parseRoutes(e.target.result, mapId);
         resolve(routes);
       }
       reader.readAsText(file);
     });
   }
 
-  parseDroppedFiles(files) {
+  static parseDroppedFiles(files, mapId, callback) {
     let promises = [];
     for (let i = 0; i < files.length; i++) {
-      promises.push(this.#parseDroppedFile(files[i]));
+      promises.push(FileParser.#parseDroppedFile(files[i], mapId));
     }
 
     Promise.all(promises).then(routeFiles => {
@@ -212,7 +230,7 @@ class FileParser {
       }
 
       if (newRoutes.length != 0) {
-        this.#selectedRoutes.set(newRoutes);
+        callback(newRoutes);
       }
     });
   }
@@ -223,6 +241,7 @@ class Routes {
   #dateSelectors;
   #groups;
   #map;
+  #snackBar;
   #storage;
 
   #allRoutes = [];
@@ -231,10 +250,11 @@ class Routes {
   #allMonths = [];
   #allWeeks = [];
 
-  constructor(dateSelectors, groups, map) {
+  constructor(dateSelectors, groups, map, snackBar) {
     this.#dateSelectors = dateSelectors;
     this.#groups = groups;
     this.#map = map;
+    this.#snackBar = snackBar;
   }
 
   setStorage(storage) {
@@ -290,20 +310,44 @@ class Routes {
     return newRoutes;
   }
 
-  remove(routesToRemove) {
+  async remove(routesToRemove) {
     let removedRoutes = [];
+    let undoCallbacks = [];
 
-    for (let i = 0; i < routesToRemove.length; i++) {
-      let route = routesToRemove[i];
+    let routeGroups = {};
+    for (const route of routesToRemove) {
+      routeGroups[route.id] = this.#groups.findRouteGroups(route);
+    }
+
+    for (const route of routesToRemove) {
       this.#allRoutes = this.#allRoutes.filter(item => item !== route);
       this.#groups.removeRouteFromAllGroups(route);
-      this.#storage.removeRoute(route);
       this.#map.removeRoute(route);
 
+      let undo = await this.#storage.removeRoute(route);
+      undoCallbacks.push(undo);
+      
       removedRoutes.push(route);
     }
 
-    return removedRoutes;
+    this.#snackBar.showUndoRouteDelete(removedRoutes.length > 1, async (event) => {
+      this.#allRoutes = this.#allRoutes.concat(removedRoutes);
+
+      for (const undoCallback of undoCallbacks) {
+        undoCallback();
+      }
+
+      for (const route of removedRoutes) {
+        this.#map.drawRoute(route);
+        this.addToDateOverview(route);
+
+        for (const group of routeGroups[route.id]) {
+          this.#groups.addRoutesToGroup(group, [route]);
+        }
+      }
+
+      this.#dateSelectors.update();
+    }, () => this.#storage.cleanUp());
   }
 
   addToDateOverview(route) {
@@ -368,8 +412,7 @@ class RouteStatistics {
   #routes;
   #selectedRoutes;
 
-  constructor(routes, selectedRoutes, dateSelectors, map) {
-    this.#routes = routes;
+  constructor(selectedRoutes, dateSelectors, map) {
     this.#selectedRoutes = selectedRoutes;
     this.#dateSelectors = dateSelectors;
     this.#map = map;
@@ -377,6 +420,10 @@ class RouteStatistics {
     this.#statsDialogBody = document.querySelector("#statsDialogBody");
 
     document.querySelector("#closeStatsBtn").addEventListener('click', this.hide.bind(this));
+  }
+
+  setRoutes(routes) {
+    this.#routes = routes;
   }
 
   #clear() {
@@ -688,12 +735,14 @@ class RouteStatistics {
 
 class Controller {
   #dateSelectors;
-  #fileParser;
   #groupSelector;
+  #mapId;
+  #mapSelector;
   #help;
   #search;
   #stats;
   #map;
+  #routes;
   #routeInfo;
   #selectedRoutes;
 
@@ -730,6 +779,16 @@ class Controller {
       } else {
         keyHandled = false;
       }
+    } else if (this.#mapSelector.visible()) {
+      if (key == 27) { // esc key
+        this.#mapSelector.hide();
+      } else if (event.target != document.querySelector("#newMapName")) {
+        if (key == 77) { // 'm' key
+          this.#mapSelector.hide();
+        }
+      } else {
+        keyHandled = false;
+      }
     } else {
       if (key == 46) { // delete key
         this.#selectedRoutes.delete();
@@ -747,6 +806,8 @@ class Controller {
         this.#groupSelector.selectGroupToRemove();
       } else if (key == 71) { // 'g' key
         this.#groupSelector.selectGroupToFocus();
+      } else if (key == 77) { // 'm' key
+        this.#mapSelector.selectMapToFocus();
       } else if (key == 83) { // 's' key
         this.#search.show();
       } else if (key == 78) { // 'n' key
@@ -786,19 +847,30 @@ class Controller {
     e.preventDefault();
 
     let files = e.target.files || e.dataTransfer.files;
-    this.#fileParser.parseDroppedFiles(files);
+    FileParser.parseDroppedFiles(files, this.#mapId, this.#showDroppedRoutes.bind(this));
   }
 
-  constructor(dateSelectors, fileParser, help, groupSelector, map, routeInfo, selectedRoutes, search, stats) {
+  #showDroppedRoutes(droppedRoutes) {
+    this.#routes.addRoutes(droppedRoutes).then((newRoutes) => {
+      this.#selectedRoutes.set(newRoutes);
+    })
+  }
+
+  connect(dateSelectors, help, groupSelector, mapId, mapSelector, routeInfo, routes, selectedRoutes, search, stats) {
     this.#dateSelectors = dateSelectors;
-    this.#fileParser = fileParser;
     this.#groupSelector = groupSelector;
     this.#help = help;
-    this.#map = map;
+    this.#mapId = mapId;
+    this.#mapSelector = mapSelector;
     this.#routeInfo = routeInfo;
+    this.#routes = routes;
     this.#selectedRoutes = selectedRoutes;
     this.#search = search;
     this.#stats = stats;
+  }
+
+  constructor(map) {
+    this.#map = map;
 
     let mapDiv = map.getDiv();
     mapDiv.addEventListener("dragover", this.#ignoreDefaults.bind(this));
@@ -811,7 +883,7 @@ class Controller {
     document.body.addEventListener("keydown", this.#mapKeyPress.bind(this));
     document.body.addEventListener("keyup", this.#mapKeyRelease.bind(this));
 
-    window.onblur = () => map.shrinkRoutes();
+    window.onblur = () => this.#map.shrinkRoutes();
   }
 }
 
@@ -824,16 +896,19 @@ class Search {
   #routes;
   #selectedRoutes;
 
-  constructor(routes, selectedRoutes) {
-    this.#routes = routes;
+  constructor(selectedRoutes) {
     this.#selectedRoutes = selectedRoutes;
 
     this.#searchDialog = document.querySelector("#searchDialog");
     this.#searchDialogInput = document.querySelector("#searchDialogInput");
     this.#searchDialogResults = document.querySelector("#searchDialogResults");
 
-    searchDialogInput.addEventListener('keyup', this.update.bind(this));
+    this.#searchDialogInput.addEventListener('keyup', this.update.bind(this));
     document.querySelector("#closeSearchBtn").addEventListener('click', this.hide.bind(this));
+  }
+
+  setRoutes(routes) {
+    this.#routes = routes;
   }
 
   #round(number) {
@@ -960,8 +1035,7 @@ class GroupSelector {
     }
   }
 
-  constructor(groups, selectedRoutes, snackBar) {
-    this.#groups = groups;
+  constructor(selectedRoutes, snackBar) {
     this.#selectedRoutes = selectedRoutes;
     this.#snackBar = snackBar;
 
@@ -986,6 +1060,10 @@ class GroupSelector {
   deleteClick(id) {
     this.hide();
     this.#groups.remove(id);
+  }
+
+  setGroups(groups) {
+    this.#groups = groups;
   }
 
   update() {
@@ -1058,6 +1136,115 @@ class GroupSelector {
         this.#snackBar.showErrorMsg("The selected routes does not belong to any groups");
       }
     }
+  }
+}
+
+class MapSelector {
+  #app;
+  #maps;
+  #snackBar;
+
+  #mapSelectShown = false;
+  #mapSelectorCallback = null;
+  #mapSelectorMaps = null;
+
+  #mapDialog = null;
+  #closeMapBtn = null;
+  #mapList = null;
+  #newMapName = null;
+  #mapSelectorTitle = null;
+  #newMapContainer = null;
+
+  #newMapKeyUp(event) {
+    let key = event.keyCode || event.charCode;
+    if (key == 13) {
+      if (this.#newMapName.value.length > 0) {
+        this.hide();
+        this.#maps.create(this.#newMapName.value, (newMapId) => {
+          app.loadMap(newMapId, false);
+        });
+      }
+    }
+  }
+
+  constructor(app, snackBar) {
+    this.#app = app;
+    this.#snackBar = snackBar;
+
+    this.#closeMapBtn = document.querySelector("#closeMapBtn");
+    this.#mapDialog = document.querySelector("#mapDialog");
+    this.#mapList = document.querySelector(".mapList");
+    this.#mapSelectorTitle = document.querySelector("#mapSelectorTitle");
+    this.#newMapContainer = document.querySelector("#newMapContainer");
+    this.#newMapName = document.querySelector("#newMapName");
+
+    this.#closeMapBtn.addEventListener('click', this.hide.bind(this));
+    this.#newMapName.addEventListener('keyup', this.#newMapKeyUp.bind(this));
+  }
+
+  setMaps(maps) {
+    this.#maps = maps;
+  }
+
+  mapClick(id) {
+    this.hide();
+    if (this.#mapSelectorCallback) {
+      this.#mapSelectorCallback(id);
+    }
+  }
+
+  deleteClick(id) {
+    this.hide();
+    this.#maps.remove(id);
+    this.#app.loadMap(null, false);
+  }
+
+  update() {
+    let mapListItems = "";
+    for (let i = 0; i < this.#mapSelectorMaps.length; i++) {
+      let map = this.#mapSelectorMaps[i];
+      mapListItems += '<div class="mapListItem mdl-list__item"> \
+          <span class="mdl-list__item-primary-content" onclick="app.mapSelector.mapClick(' + map.id + ')"> \
+            <span>' + (this.#app.shownMapId == map.id ? '<b>' : '') + map.name + (this.#app.shownMapId == map.id ? '</b>' : '') + '</span> \
+          </span>';
+      if (this.#mapSelectorMaps.length > 1) {
+        mapListItems += '<a class="mdl-list__item-secondary-action" onclick="app.mapSelector.deleteClick(' + map.id + ')"><i class="material-icons">delete</i></a>';
+      }
+      mapListItems += '</div>';
+    }
+
+    this.#newMapName.value = "";
+    this.#newMapName.parentElement.MaterialTextfield.change();
+    this.#closeMapBtn.focus();
+
+    this.#mapList.innerHTML = mapListItems;
+  }
+
+  #show(callback, title, maps, newMapInput) {
+    this.#mapSelectorCallback = callback;
+    this.#mapSelectorMaps = maps;
+
+    this.update();
+
+    this.#mapSelectorTitle.innerText = title;
+    this.#newMapContainer.style.display = (newMapInput ? "inline-block" : "none");
+
+    this.#mapDialog.showModal();
+    this.#closeMapBtn.focus();
+    this.#mapSelectShown = true;
+  }
+
+  hide() {
+    this.#mapDialog.close();
+    this.#mapSelectShown = false;
+  }
+
+  visible() {
+    return this.#mapSelectShown;
+  }
+
+  selectMapToFocus() {
+    this.#show(function(id) { this.#app.loadMap(id, false) }, "Select Map", this.#maps.get(), true);
   }
 }
 
@@ -1277,6 +1464,7 @@ class RouteInfo {
 
 class SnackBar {
   #container = null;
+  #hiddenTimer = null;
 
   constructor() {
     this.#container = document.querySelector("#snackbarDiv");
@@ -1289,20 +1477,32 @@ class SnackBar {
     });
   }
 
-  showUndoRouteDelete(plural, undoHandler) {
-    this.#showUndoDelete(plural ? "Routes were deleted" : "Route was deleted", undoHandler);
+  showUndoRouteDelete(plural, undoHandler, hiddenHandler) {
+    this.#showUndoDelete(plural ? "Routes were deleted" : "Route was deleted", undoHandler, hiddenHandler);
   }
 
-  showUndoGroupDelete(undoHandler) {
-    this.#showUndoDelete("Group was deleted", undoHandler);
+  showUndoMapDelete(undoHandler, hiddenHandler) {
+    this.#showUndoDelete("Map was deleted", undoHandler, hiddenHandler);
   }
 
-  #showUndoDelete(message, undoHandler) {
+  showUndoGroupDelete(undoHandler, hiddenHandler) {
+    this.#showUndoDelete("Group was deleted", undoHandler, hiddenHandler);
+  }
+
+  #showUndoDelete(message, undoHandler, hiddenHandler) {
+    if (hiddenHandler) {
+      this.#hiddenTimer = window.setTimeout(hiddenHandler, 6000);
+    }
+
     this.#container.MaterialSnackbar.showSnackbar({
       message: message,
       timeout: 5000,
       actionText: "Undo",
       actionHandler: async event => {
+        if (this.#hiddenTimer) {
+          window.clearTimeout(this.#hiddenTimer);
+          this.#hiddenTimer = null;
+        }
         undoHandler(event);
         this.#container.MaterialSnackbar.cleanup_();
       }
@@ -1313,27 +1513,20 @@ class SnackBar {
 
 class SelectedRoutes {
   #dateSelectors;
-  #groups;
   #map;
   #routeInfo;
   #routes;
-  #snackBar;
 
   #allSelectedRoutes = [];
   #selectedRoutesLength = 0;
 
-  constructor(dateSelectors, routeInfo, snackBar) {
+  constructor(dateSelectors, routeInfo) {
     this.#dateSelectors = dateSelectors;
     this.#routeInfo = routeInfo;
-    this.#snackBar = snackBar;
   }
 
   setMap(map) {
     this.#map = map;
-  }
-
-  setGroups(groups) {
-    this.#groups = groups;
   }
 
   setRoutes(routes) {
@@ -1457,46 +1650,85 @@ class SelectedRoutes {
   }
 
   delete() {
-    let routeGroups = {};
-    for (const route of this.#allSelectedRoutes) {
-      routeGroups[route.id] = this.#groups.findRouteGroups(route);
-    }
-
-    let deletedRoutes = this.#routes.remove(this.#allSelectedRoutes);
-
+    this.#routes.remove(this.#allSelectedRoutes);
     this.#allSelectedRoutes = [];
     this.#updateSelectedRoutesLength();
     this.#map.removeRouteOverlay();
     this.#routeInfo.clear();
     this.#routes.rebuildDateOverview();
     this.#dateSelectors.update();
-
-    this.#snackBar.showUndoRouteDelete(deletedRoutes.length > 1, async (event) => {
-      this.#routes.addRoutes(deletedRoutes);
-
-      for (const route of deletedRoutes) {
-        let groups = routeGroups[route.id];
-        for (const group of groups) {
-          this.#groups.addRoutesToGroup(group, [route]);
-        }
-      }
-
-      deletedRoutes = [];
-    });
   }
 }
 
+class Maps {
+  #storage;
+  #snackBar;
+
+  #allMaps = [];
+
+  constructor(snackBar) {
+    this.#snackBar = snackBar;
+  }
+
+  setStorage(storage) {
+    this.#storage = storage;
+  }
+
+  create(name, callback) {
+    let map = {
+      name: name
+    };
+
+    this.#allMaps.push(map);
+    this.#storage.addMap(map, callback);
+  }
+
+  async remove(id) {
+    let map = this.#findMap(id);
+    this.#allMaps = this.#allMaps.filter(item => item !== map);
+    let undoRemoveMap = await this.#storage.removeMap(map);
+
+    this.#snackBar.showUndoMapDelete(async event => {
+      this.#allMaps.push(map);
+      undoRemoveMap();
+    }, () => this.#storage.cleanUp());
+  }
+
+  get() {
+    return this.#allMaps;
+  }
+
+  push(map) {
+    this.#allMaps.push(map);
+  }
+
+  #findMap(id) {
+    for (let i = 0; i < this.#allMaps.length; i++) {
+      let map = this.#allMaps[i];
+      if (map.id == id) {
+        return map;
+      }
+    }
+    throw "Unknown map ID " + id;
+  }
+
+  getName(id) {
+    return this.#findMap(id).name;
+  }
+}
 
 class Groups {
   #selectedRoutes;
   #snackBar;
   #storage;
+  #mapId;
 
   #allGroups = [];
 
-  constructor(selectedRoutes, snackBar) {
+  constructor(selectedRoutes, snackBar, mapId) {
     this.#selectedRoutes = selectedRoutes;
     this.#snackBar = snackBar;
+    this.#mapId = mapId;
   }
 
   setStorage(storage) {
@@ -1514,6 +1746,7 @@ class Groups {
   create(name, callback) {
     let group = {
       name: name,
+      mapId: this.#mapId,
       routes: []
     };
 
@@ -1521,16 +1754,16 @@ class Groups {
     this.#storage.addGroup(group, callback);
   }
 
-  remove(id) {
+  async remove(id) {
     let group = this.#findGroup(id);
     this.#allGroups = this.#allGroups.filter(item => item !== group);
-    this.#storage.removeGroup(group);
+    let undoRemoveGroup = await this.#storage.removeGroup(group);
     this.#selectedRoutes.clear();
 
     this.#snackBar.showUndoGroupDelete(async event => {
       this.#allGroups.push(group);
-      this.#storage.addGroup(group, function() {});
-    });
+      undoRemoveGroup();
+    }, () => this.#storage.cleanUp());
   }
 
   #findGroup(id) {
@@ -1679,9 +1912,12 @@ class MapUI {
     this.#routeInfo = routeInfo;
     this.#selectedRoutes = selectedRoutes;
 
-    this.#mapDiv = document.getElementById("mapDiv");
+    if (this.#mapDiv === undefined) {
+      this.#mapDiv = document.getElementById("mapDiv");
+      this.#mapRef = L.map('mapDiv')
+    }
 
-    this.#mapRef = L.map('mapDiv').setView({
+    this.#mapRef.setView({
       lat: 55.50841618187183,
       lng: 11.593322753906252
     }, 9);
@@ -1757,6 +1993,13 @@ class MapUI {
     let drawnRoute = this.#findDrawnRoute(route);
     drawnRoute.path.remove();
     this.#drawnRoutes = this.#drawnRoutes.filter(item => item !== drawnRoute);
+  }
+
+  clear() {
+    for (const drawnRoute of this.#drawnRoutes) {
+      drawnRoute.path.remove();
+    }
+    this.#drawnRoutes = [];
   }
 
   removeRouteOverlay() {
@@ -1955,147 +2198,288 @@ class MapUI {
 
 
 class Storage {
-  #dateSelectors;
-  #groups;
-  #routes;
-
   #db = null;
 
-  constructor(routes, groups, dateSelectors) {
-    this.#routes = routes;
-    this.#groups = groups;
-    this.#dateSelectors = dateSelectors;
+  connect(callback) {
+    return new Promise((resolve, reject) => {
+      let openRequest = indexedDB.open("routeDB", 4);
+
+      openRequest.onupgradeneeded = event => {
+        this.#db = event.target.result; 
+        if (!this.#db.objectStoreNames.contains('routes')) {  
+          let objectStore = this.#db.createObjectStore('routes', { keyPath: 'id', autoIncrement: true});
+          objectStore.createIndex("hash", "hash", {unique: true});
+        }
+
+        if (!this.#db.objectStoreNames.contains('groups')) {  
+          let objectStore = this.#db.createObjectStore('groups', { keyPath: 'id', autoIncrement: true});
+        }
+
+        if (!this.#db.objectStoreNames.contains('maps')) {  
+          let objectStore = this.#db.createObjectStore('maps', { keyPath: 'id', autoIncrement: true});
+        }
+      }
+
+      openRequest.onerror = () => { 
+        console.error("Unable to access database", openRequest.error);
+        reject();
+      };
+      
+      openRequest.onsuccess = (event) => { 
+        this.#db = event.target.result;
+
+        this.cleanUp();
+
+        resolve();
+      }
+    });
   }
 
-  load() {
-    let openRequest = indexedDB.open("routeDB", 2);
+  async loadRoutes(mapId, routes) {
+    routes.setStorage(this);
 
-    openRequest.onupgradeneeded = event => {
-      this.#db = event.target.result; 
-      if (!this.#db.objectStoreNames.contains('routes')) {  
-        let objectStore = this.#db.createObjectStore('routes', { keyPath: 'id', autoIncrement: true});
-        objectStore.createIndex("hash", "hash", {unique: true});
-      }
-
-      if (!this.#db.objectStoreNames.contains('groups')) {  
-        let objectStore = this.#db.createObjectStore('groups', { keyPath: 'id', autoIncrement: true});
-      }
-    }
-
-    openRequest.onerror = () => { 
-      console.error("Unable to access database", openRequest.error); 
-    };
-      
-    openRequest.onsuccess = (event) => { 
-      this.#db = event.target.result; 
+    return new Promise((resolve, reject) => {
       let readTransaction = this.#db.transaction("routes");
       let objectStore = readTransaction.objectStore("routes");
       objectStore.openCursor().onsuccess = (event) => {
         let cursor = event.target.result;
         if (cursor) {
           let route = cursor.value;
-          route.selected = false;
-          route.visible = true;
-          this.#routes.addToDateOverview(route);
-          this.#routes.push(route);
+          if (!route.deleted && route.mapId == mapId) {
+            route.selected = false;
+            route.visible = true;
+            routes.addToDateOverview(route);
+            routes.push(route);
+          }
           cursor.continue();
         }
       }
 
       readTransaction.oncomplete = event => {
-        if (this.#routes.count() > 0) {
-          this.#dateSelectors.update();
+        resolve();
+      }
+    });
+  }
+
+  async loadGroups(mapId, groups, routes) {
+    groups.setStorage(this);
+
+    return new Promise((resolve, reject) => {
+      let readTransaction = this.#db.transaction("groups");
+      let objectStore = readTransaction.objectStore("groups");
+      objectStore.openCursor().onsuccess = (event) => {
+        let cursor = event.target.result;
+        if (cursor) {
+          let dbGroup = cursor.value;
+          if (!dbGroup.deleted && dbGroup.mapId == mapId) {
+            groups.push({
+              name: dbGroup.name,
+              mapId: dbGroup.mapId,
+              routes: routes.findRoutesByIDs(dbGroup.routeIds),
+              id: dbGroup.id,
+              deleted: false
+            });
+          }
+
+          cursor.continue();
         }
-
-        // Groups must be loaded after routes
-        this.#loadRoutes();
       }
-    }
+
+      readTransaction.oncomplete = event => {
+        resolve();
+      }
+    });
   }
 
-  #loadRoutes() {
-    let readTransaction = this.#db.transaction("groups");
-    let objectStore = readTransaction.objectStore("groups");
-    objectStore.openCursor().onsuccess = (event) => {
-      let cursor = event.target.result;
-      if (cursor) {
-        let dbGroup = cursor.value;
-        this.#groups.push({
-          name: dbGroup.name,
-          routes: this.#routes.findRoutesByIDs(dbGroup.routeIds),
-          id: dbGroup.id
-        })
+  async loadMaps(maps) {
+    maps.setStorage(this);
 
-        cursor.continue();
+    return new Promise((resolve, reject) => {
+      let readTransaction = this.#db.transaction("maps");
+      let objectStore = readTransaction.objectStore("maps");
+      let firstMapId = null;
+
+      objectStore.openCursor().onsuccess = (event) => {
+        let cursor = event.target.result;
+        if (cursor) {
+          let dbMap = cursor.value;
+
+          if (!dbMap.deleted) {
+            maps.push({
+              name: dbMap.name,
+              id: dbMap.id
+            });
+
+            if (firstMapId == null) {
+              firstMapId = dbMap.id;
+            }
+          }
+  
+          cursor.continue();
+        } else {
+          if (maps.get().length == 0) {
+            let defaultMap = {
+              name: "Default map",
+              deleted: false
+            };
+
+            maps.push(defaultMap);
+            this.addMap(defaultMap, () => resolve());
+          } else {
+            resolve();
+          }
+        }
       }
-    }
+    });
   }
 
-  async addGroup(group, callback) {
+  #dbGroupFromGroup(group, addId) {
     let dbGroup = {
       name: group.name,
-      routeIds: group.routes.map(route => route.id)
-    }
-
-    let transaction = this.#db.transaction(["groups"], "readwrite");
-
-    transaction.onerror = function(event)  { 
-      console.error("Unable to access database", event); 
-    };
-
-    let objectStore = transaction.objectStore("groups");
-    let request = objectStore.add(dbGroup);
-    request.onsuccess = async function(event) {
-      group.id = event.target.result;
-      callback();
-    };
-  }
-
-  async updateGroup(group) {
-    let dbGroup = {
-      name: group.name,
+      mapId: group.mapId,
       routeIds: group.routes.map(route => route.id),
-      id: group.id
+      deleted: group.deleted ? true : false
+    };
+    
+    if (addId) {
+      dbGroup.id = group.id;
     }
 
-    let transaction = this.#db.transaction(["groups"], "readwrite");
+    return dbGroup;
+  }
+
+  cleanUp() {
+    this.#cleanUpTable("routes");
+    this.#cleanUpTable("maps");
+    this.#cleanUpTable("groups");
+  }
+
+  #cleanUpTable(tableName) {
+    let transaction = this.#db.transaction([tableName], "readwrite");
+    let objectStore = transaction.objectStore(tableName);
+    let request = objectStore.getAll();
+
+    request.onsuccess = async function(event) {
+      event.target.result.forEach(function(record) {
+        if (record.deleted) {
+          objectStore.delete(record.id);
+        }
+      })
+    }
+
+  }
+
+  #dbUpdate(accessType, tableName, obj, callback) {
+    let transaction = this.#db.transaction([tableName], "readwrite");
 
     transaction.onerror = function(event)  { 
       console.error("Unable to access database", event); 
     };
 
-    let objectStore = transaction.objectStore("groups");
-    let request = objectStore.put(dbGroup);
+    let objectStore = transaction.objectStore(tableName);
+    let request = objectStore[accessType](obj);
     request.onsuccess = async function(event) {
-      
+      if (callback) {
+        callback(event.target.result);
+      }
     };
+  }
+
+  addGroup(group, callback) {
+    let dbGroup = this.#dbGroupFromGroup(group, false);
+
+    this.#dbUpdate("add", "groups", dbGroup, (groupId) => {
+      group.id = groupId;
+      callback();
+    });
+  }
+
+  updateGroup(group) {
+    return new Promise((resolve, reject) => {
+      let dbGroup = this.#dbGroupFromGroup(group, true);
+
+      this.#dbUpdate("put", "groups", dbGroup, resolve);
+    });
   }
 
   async removeGroup(group) {
-    let transaction = this.#db.transaction(["groups"], "readwrite");
+    group.deleted = true;
+    await this.updateGroup(group);
 
-    transaction.onerror = function(event)  { 
-      console.error("Unable to access database", event); 
-    };
-
-    let objectStore = transaction.objectStore("groups");
-    let request = objectStore.delete(group.id);
-    request.onsuccess = function(event) {
-
+    return async () => {
+      group.deleted = false;
+      await this.updateGroup(group);
     }
   }
 
-  async removeRoute(route) {
-    let transaction = this.#db.transaction(["routes"], "readwrite");
-
-    transaction.onerror = function(event)  { 
-      console.error("Unable to access database", event); 
+  addMap(map, callback) {
+    let dbMap = {
+      name: map.name,
+      deleted: false
     };
 
-    let objectStore = transaction.objectStore("routes");
-    let request = objectStore.delete(route.id);
-    request.onsuccess = function(event) {
+    this.#dbUpdate("add", "maps", dbMap, (mapId) => {
+      map.id = mapId;
+      callback();
+    })
+  }
 
+  updateMap(map) {
+    return new Promise((resolve, reject) => {
+      this.#dbUpdate("put", "maps", map, resolve);
+    });
+  }
+
+  async removeMap(map) {
+    map.deleted = true;
+    await this.updateMap(map);
+
+    return async () => {
+      map.deleted = false;
+      await this.updateMap(map);
+    }
+  }
+
+  #dbRouteFromRoute(route, addId) {
+    let dbRoute = {
+      name: route.name,
+      mapId: route.mapId,
+      length: route.length,
+      points: route.points,
+      startTime: route.startTime,
+      endTime: route.endTime,
+      hash: route.hash,
+      deleted: route.deleted ? true : false
+    };
+    
+    if (addId) {
+      dbRoute.id = route.id;
+    }
+
+    return dbRoute;
+  }
+
+  addRoute(route) {
+    let dbRoute = this.#dbRouteFromRoute(route, false);
+
+    this.#dbUpdate("add", "routes", dbRoute, (routeId) => route.id = routeId);
+  }
+
+  updateRoute(route) {
+    return new Promise((resolve, reject) => {
+      let dbRoute = this.#dbRouteFromRoute(route, true);
+
+      this.#dbUpdate("put", "routes", route, resolve);
+    });
+  }
+
+  async removeRoute(route) {
+    route.deleted = true;
+    await this.updateRoute(route);
+
+    return async () => {
+      route.deleted = false;
+      await this.updateRoute(route);
     }
   }
 
@@ -2116,35 +2500,6 @@ class Storage {
         reject();
       }
     });
-  }
-
-  #getRouteId(route) {
-    return this.lookupRoute(route, function(getter, resolve) {
-      resolve(getter.result.id);
-    });
-  }
-
-  async addRoute(route) {
-    let dbRoute = {
-      name: route.name,
-      length: route.length,
-      points: route.points,
-      startTime: route.startTime,
-      endTime: route.endTime,
-      hash: route.hash
-    }
-
-    let transaction = this.#db.transaction(["routes"], "readwrite");
-
-    transaction.onerror = function(event)  { 
-      console.error("Unable to access database", event); 
-    };
-
-    let objectStore = transaction.objectStore("routes");
-    let request = objectStore.add(dbRoute);
-    request.onsuccess = async event => {
-      route.id = await this.#getRouteId(route);
-    };
   }
 }
 

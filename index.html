@@ -108,6 +108,23 @@
       </div>
     </dialog>
 
+    <dialog id="mapDialog" class="mdl-dialog">
+      <h3 class="mdl-dialog__title" id="mapSelectorTitle">Select Map</h3>
+      <div class="mdl-dialog__content">
+        <div class="mapList mdl-list"></div>
+
+        <form action="#">
+          <div class="mdl-textfield mdl-js-textfield" id="newMapContainer">
+            <input class="mdl-textfield__input" type="text" id="newMapName">
+            <label class="mdl-textfield__label" for="newMapName">New map</label>
+          </div>
+        </form>
+      </div>
+      <div class="mdl-dialog__actions">
+        <button type="button" id="closeMapBtn" class="mdl-button">Cancel</button>
+      </div>
+    </dialog>
+
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"
       integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA=="
       crossorigin=""></script>

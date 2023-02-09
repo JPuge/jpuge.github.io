@@ -118,6 +118,45 @@ body {
   background: #eee;
 }
 
+#mapDialog {
+  width: 400px;
+}
+
+.mapList {
+  padding: 0px;
+  width: 100%;
+  margin-bottom: 0px;
+}
+
+#newMapContainer {
+  margin-left: 20px;
+}
+
+.mapListItem {
+  height: 50px;
+  font-size: large;
+  padding: 0px !important;
+  line-height: 50px;
+  cursor: pointer;
+}
+
+.mapListItem span {
+  height: 100%;
+  line-height: 50px;
+  padding-left: 10px;
+  cursor: pointer;
+}
+
+.mapListItem a {
+  cursor: pointer;
+  line-height: 50px;
+  padding-top: 10px;
+}
+
+.mapListItem :hover {
+  background: #eee;
+}
+
 #snackbarDiv {
   z-index: 10000;
 }
